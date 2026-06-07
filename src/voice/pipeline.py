@@ -101,22 +101,22 @@ class SDRTurnPolicy(FrameProcessor):
 
         if any(phrase in text for phrase in ("who are you", "what is this", "why are you calling")):
             return (
-                f"I'm an AI assistant calling for {sender_name}. "
-                "I noticed a company signal that may affect AI governance and data controls."
+                f"I'm an AI assistant calling for {sender_name}, about a company signal "
+                "that may affect AI governance and data controls."
             )
 
         if any(phrase in text for phrase in ("what do you do", "what is your company", "tell me more")):
             return (
-                "We help teams compare how similar companies are handling AI governance and data controls. "
-                f"Would a short call with {sender_name} be useful?"
+                "We help teams compare how similar companies are handling AI governance and data controls, "
+                f"would a short call with {sender_name} be useful?"
             )
 
         if any(phrase in text for phrase in ("send me", "email me", "send info", "send information")):
             self._turn = 2
-            return "Sure. What email should I send it to?"
+            return "Sure, what email should I send it to?"
 
         if any(phrase in text for phrase in ("not the right person", "not my area", "someone else")):
-            return "Understood. Who is the right person for AI governance or data controls?"
+            return "Understood, who is the right person for AI governance or data controls?"
 
         if any(phrase in text for phrase in ("already handled", "we have it covered", "not a priority")):
             return (
@@ -125,22 +125,22 @@ class SDRTurnPolicy(FrameProcessor):
             )
 
         if any(phrase in text for phrase in ("how much", "price", "pricing", "cost")):
-            return "Pricing depends on scope. The useful next step is a short fit call. Would that be worth scheduling?"
+            return "Pricing depends on scope, so the useful next step is a short fit call, would that be worth scheduling?"
 
         if any(word in text for word in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
-            return "Understood. I won't take more time. Thanks for speaking with me."
+            return "Understood, I won't take more time, thanks for speaking with me."
 
         if any(word in text for word in ("busy", "bad time", "call me later", "not now")):
-            return "No problem. What is a better time for a quick follow-up?"
+            return "No problem, what is a better time for a quick follow-up?"
 
         if "are you there" in text or "can you hear" in text:
-            return "Yes, I'm here and I can hear you. I was calling to ask one quick question about your AI governance work."
+            return "Yes, I'm here and I can hear you, I was calling to ask one quick question about your AI governance work."
 
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
         if email:
             self._turn = 99
-            return "Thanks. I'll note that for the follow-up invite. Anything specific you would want covered?"
+            return "Thanks, I'll note that for the follow-up invite, anything specific you would want covered?"
 
         positive = any(word in text for word in ("yes", "yeah", "yep", "sure", "okay", "ok", "i do", "go ahead"))
 
@@ -148,7 +148,7 @@ class SDRTurnPolicy(FrameProcessor):
             self._turn = 1
             if positive:
                 return (
-                    f"Great. Would a short call with {sender_name} be worth it to compare notes on "
+                    f"Great, would a short call with {sender_name} be worth it to compare notes on "
                     "AI governance and data controls?"
                 )
             return (
@@ -159,16 +159,16 @@ class SDRTurnPolicy(FrameProcessor):
         if self._turn == 1:
             self._turn = 2
             if positive:
-                return "Great. What email should the calendar invite go to?"
-            return "Understood. Is there someone else on your team who owns AI governance or data controls?"
+                return "Great, what email should the calendar invite go to?"
+            return "Understood, is there someone else on your team who owns AI governance or data controls?"
 
         if self._turn == 2:
             self._turn = 3
             if positive:
-                return "Great. What email should the calendar invite go to?"
-            return "No problem. I can mark this as not a fit for now. Thanks for the time."
+                return "Great, what email should the calendar invite go to?"
+            return "No problem, I can mark this as not a fit for now, thanks for the time."
 
-        return "That helps. Should I send a calendar invite, or would you rather I send a short note first?"
+        return "That helps, should I send a calendar invite, or would you rather I send a short note first?"
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
@@ -304,7 +304,7 @@ async def run_sdr_pipeline(
         transport.output(),
     ])
 
-    task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
+    task = PipelineTask(pipeline, PipelineParams(allow_interruptions=False))
     opener_started = False
 
     @transport.event_handler("on_first_participant_joined")
