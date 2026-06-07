@@ -83,7 +83,7 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _reply_after_interim_pause(self, text: str) -> None:
         try:
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.3)
             if text == self._pending_interim_text:
                 self._pending_interim_text = ""
                 self._transcript.append(("prospect", text))
@@ -93,9 +93,8 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _send_reply(self, user_text: str) -> None:
         reply = self._reply(user_text)
-        # TTS speaks at ~0.25s/word; add 1.5s buffer for network + margin
-        word_count = len(reply.split())
-        self._ignore_until = asyncio.get_running_loop().time() + max(word_count * 0.25 + 1.5, 4.0)
+        # WebRTC AEC handles echo; 0.5s just prevents double-trigger from same utterance
+        self._ignore_until = asyncio.get_running_loop().time() + 0.5
         self._transcript.append(("agent", reply))
         logger.info("sdr reply: %s", reply)
         await self.push_frame(TextFrame(reply))
@@ -404,11 +403,8 @@ async def run_sdr_pipeline(
         opener_started = True
         await asyncio.sleep(0.5)
         opening_line = build_opening_line(prospect, signal)
-        # Block STT responses during opener TTS to prevent echo feedback loop
-        opener_words = len(opening_line.split())
-        sdr_policy._ignore_until = (
-            asyncio.get_running_loop().time() + max(opener_words * 0.25 + 1.5, 5.0)
-        )
+        # Short block — just enough to prevent STT firing before opener TTS starts
+        sdr_policy._ignore_until = asyncio.get_running_loop().time() + 1.5
         sdr_policy._transcript.append(("agent", opening_line))
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
