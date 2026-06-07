@@ -15,7 +15,13 @@ os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import TextFrame, TranscriptionFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    TextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -91,6 +97,7 @@ class SDRTurnPolicy(FrameProcessor):
         self._call_id  = call_id
         self._outcome  = "needs_review"
         self._responding = False
+        self._bot_speaking = False   # true while TTS audio is playing
         self._ignore_until = 0.0
         self._transcript: list[tuple[str, str]] = [("agent", opener)]
 
@@ -107,9 +114,19 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+            await self.push_frame(frame, direction)
+            return
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            # small cooldown after bot finishes so the mic tail doesn't trigger
+            self._ignore_until = asyncio.get_running_loop().time() + 0.4
+            await self.push_frame(frame, direction)
+            return
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
-            if text and not self._responding and self._ready():
+            if text and not self._bot_speaking and not self._responding and self._ready():
                 await self._handle_turn(text)
             return
         await self.push_frame(frame, direction)
@@ -263,8 +280,6 @@ async def run_sdr_pipeline(
             return
         opener_fired = True
         await asyncio.sleep(0.5)
-        # Block STT for opener duration (~1.5s for a 16-word opener at TTS pace)
-        sdr_policy._ignore_until = asyncio.get_running_loop().time() + 1.5
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")
