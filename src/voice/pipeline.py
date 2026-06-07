@@ -29,7 +29,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.elevenlabs import ElevenLabsTTSService
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
@@ -369,6 +368,7 @@ async def run_sdr_pipeline(
     )
 
     if config.CARTESIA_API_KEY:
+        from pipecat.services.cartesia import CartesiaTTSService
         tts = CartesiaTTSService(
             api_key  = config.CARTESIA_API_KEY,
             voice_id = config.CARTESIA_VOICE_ID or "79a125e8-cd45-4c13-8a67-188112f4dd22",
