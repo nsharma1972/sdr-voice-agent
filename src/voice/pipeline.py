@@ -73,14 +73,10 @@ _SIGNAL_OPENERS = {
 def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
     company  = prospect.get("company") or "your company"
     sig_type = signal.get("signal_type", "")
-    context  = _SIGNAL_OPENERS.get(sig_type, "calling about recent activity at {company}").format(company=company)
-    return (
-        "Hi {first_name}, I'm an AI assistant for {sender_name} — {context}. "
-        "Do you have 60 seconds?"
-    ).format(
-        first_name  = prospect.get("first_name", "there"),
-        sender_name = config.SENDER_NAME or "our team",
-        context     = context,
+    context  = _SIGNAL_OPENERS.get(sig_type, "recent activity at {company}").format(company=company)
+    return "Hi {first_name}, {context} — got 60 seconds?".format(
+        first_name = prospect.get("first_name", "there"),
+        context    = context,
     )
 
 
@@ -218,7 +214,7 @@ class SDRTurnPolicy(FrameProcessor):
                     json={
                         "model":       model,
                         "messages":    self._trimmed_messages(),
-                        "max_tokens":  40,
+                        "max_tokens":  25,
                         "temperature": 0.3,
                         "stream":      False,
                     },
@@ -305,7 +301,7 @@ async def run_sdr_pipeline(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
             model        = "nova-2",
-            endpointing  = 300,
+            endpointing  = 100,
             smart_format = False,
         ),
     )
