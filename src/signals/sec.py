@@ -55,7 +55,9 @@ async def fetch_10k_ai_risk(days: int = 180, limit: int = 20) -> list[Signal]:
             hits = data.get("hits", {}).get("hits", [])
             for hit in hits[:limit]:
                 src         = hit.get("_source", {})
-                entity      = src.get("entity_name", "").strip()
+                # EFTS returns display_names as a list: ['DOMO, INC.  (DOMO)  (CIK 0001234)']
+                raw_names = src.get("display_names") or [src.get("entity_name", "")]
+                entity = raw_names[0].split("(")[0].strip(" ,") if raw_names else ""
                 if not entity:
                     continue
                 file_date_s = src.get("file_date", "")

@@ -16,8 +16,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./sdr.db")
 # Daily.co — free tier, 10K participant-minutes/month
 DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
 
-# LLM routing — local Mistral via LiteLLM (free)
+# LLM routing — local Mistral via LiteLLM or Ollama directly
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1")
+LLM_MODEL        = os.environ.get("LLM_MODEL", "mistral-small-local")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "none")
 
 # Cloud LLM fallback — only used when local times out

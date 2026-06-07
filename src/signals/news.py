@@ -47,14 +47,25 @@ def _parse_rss_date(date_str: str) -> datetime:
         return datetime.now(timezone.utc)
 
 
+_SKIP_WORDS = {
+    "The", "This", "For", "With", "CEO", "CTO", "VP", "AI", "From", "When",
+    "How", "Why", "What", "New", "Top", "Best", "First", "On", "In", "At",
+    "Using", "Here", "Global", "Report", "Inside", "Why", "When", "Building",
+    "Advancing", "Tackling", "Redefining", "Driving", "Leading", "Making",
+    "Navigating", "Transforming", "Unlocking", "Executive", "Interview",
+    "Companies", "Company", "Industry", "Business", "Technology",
+}
+
 def _extract_company(title: str, description: str) -> str:
-    text = f"{title} {description}"
-    # Match capitalized multi-word sequences likely to be company names
-    candidates = re.findall(r"\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2}(?:\s+(?:Inc|Corp|Ltd|LLC|AG|SE|GmbH|Co))?)\b", text)
-    skip = {"The", "This", "For", "With", "CEO", "CTO", "VP", "AI", "From", "When",
-            "How", "Why", "What", "New", "Top", "Best", "First", "On", "In", "At"}
+    # Prefer explicit "CompanyName announces/launches/raises" patterns
+    m = re.match(r"^([A-Z][A-Za-z0-9&\.']+(?:\s+[A-Z][A-Za-z0-9&\.']+){0,3})\s+(?:announces|launches|raises|closes|partners|releases|names|expands|acquires)", title)
+    if m:
+        return m.group(1).strip()
+    # Fall back to first capitalized proper noun phrase (2+ words, must include org suffix or be ≥2 tokens)
+    candidates = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+(?:Inc|Corp|Ltd|LLC|AG|SE|GmbH|Co)\.?)?)\b", title)
     for c in candidates:
-        if c not in skip and len(c) > 5:
+        words = c.split()
+        if len(words) >= 2 and words[0] not in _SKIP_WORDS and words[-1] not in _SKIP_WORDS:
             return c
     return ""
 

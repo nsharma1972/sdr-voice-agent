@@ -116,6 +116,10 @@ def qualify_leads(signals: list[Signal]) -> list[Lead]:
         key = sig.company_name.strip().lower()
         grouped.setdefault(key, []).append(sig)
 
-    leads = [score_company(sigs[0].company_name, sigs) for sigs in grouped.values()]
+    leads = [
+        score_company(sigs[0].company_name, sigs)
+        for key, sigs in grouped.items()
+        if key not in ("unknown (see link)", "unknown", "")
+    ]
     leads.sort(key=lambda l: l.score, reverse=True)
     return leads

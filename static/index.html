@@ -201,8 +201,8 @@
   <header>
     <span class="brand">SDR Voice Agent</span>
     <nav>
-      <button class="tab-btn active" onclick="switchTab('demo')">Demo Call</button>
-      <button class="tab-btn" onclick="switchTab('leads')">Leads</button>
+      <button class="tab-btn" onclick="switchTab('demo')">Demo Call</button>
+      <button class="tab-btn active" onclick="switchTab('leads')">Leads</button>
       <button class="tab-btn" onclick="switchTab('calls')">Calls</button>
     </nav>
   </header>
@@ -210,7 +210,7 @@
   <main>
 
     <!-- ── DEMO TAB ── -->
-    <div id="tab-demo" class="tab-panel active">
+    <div id="tab-demo" class="tab-panel">
       <div class="card" style="max-width:520px;margin:0 auto;">
         <h2>Start a Demo Call</h2>
         <p class="sub">Enter prospect context, then start a live AI voice conversation in your browser.</p>
@@ -260,7 +260,7 @@
     </div>
 
     <!-- ── LEADS TAB ── -->
-    <div id="tab-leads" class="tab-panel">
+    <div id="tab-leads" class="tab-panel active">
       <div class="card">
         <div class="toolbar">
           <div>
@@ -312,7 +312,7 @@
 
 <script>
 // ── tab navigation ────────────────────────────────────────────────────────────
-let _currentTab = 'demo';
+let _currentTab = 'leads';
 function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -389,9 +389,7 @@ function renderLeads() {
     const sc = l.tier === 'CONTACT' ? 'contact' : l.tier === 'NURTURE' ? 'nurture' : 'archive';
     const sig = SIGNAL_LABELS[l.primary_signal] || l.primary_signal;
     const src = l.source_url ? `<a href="${l.source_url}" target="_blank" style="color:#4f9cf9;font-size:11px;">↗ source</a>` : '';
-    const callBtn = l.tier === 'CONTACT'
-      ? `<button class="btn btn-primary btn-sm" onclick="callLead(${JSON.stringify(l.company_name)},${JSON.stringify(l.primary_signal)},${JSON.stringify(l.summary)})">Call</button>`
-      : '';
+    const callBtn = `<button class="btn btn-primary btn-sm" onclick="callLead(${JSON.stringify(l.company_name)},${JSON.stringify(l.primary_signal)},${JSON.stringify(l.summary)})">Call</button>`;
     return `<tr>
       <td><span class="score-badge score-${sc}">${l.score}</span></td>
       <td><span class="tier-pill tier-${sc}">${l.tier}</span></td>
@@ -517,6 +515,9 @@ async function startCall() {
 }
 
 async function endCall() { if (callFrame) await callFrame.leave(); }
+
+// ── init ───────────────────────────────────────────────────────────────────────
+loadLeads();
 
 // ── utils ──────────────────────────────────────────────────────────────────────
 function esc(s) {

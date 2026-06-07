@@ -132,7 +132,7 @@ async def run_sdr_pipeline(
     llm = OpenAILLMService(
         api_key=config.LITELLM_API_KEY or "none",
         base_url=config.LITELLM_BASE_URL,
-        model="mistral-small-local",
+        model=config.LLM_MODEL,
     )
 
     system_prompt = build_system_prompt(prospect, signal)

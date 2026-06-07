@@ -27,10 +27,9 @@ _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; SDR-Voice-Agent/0.1)"}
 
 # BusinessWire category feeds (free RSS, no auth)
 _BW_FEEDS = [
-    ("https://www.businesswire.com/rss/home/?rss=G7",    "technology"),
-    ("https://www.businesswire.com/rss/home/?rss=G6",    "healthcare"),
-    ("https://www.businesswire.com/rss/home/?rss=G18",   "financial-services"),
-    ("https://www.businesswire.com/rss/home/?rss=G14",   "energy-environment"),
+    ("https://www.businesswire.com/rss/home/?rss=G1",    "all-news"),
+    ("https://www.globenewswire.com/RssFeed/subjectcode/28-Technology", "technology"),
+    ("https://www.globenewswire.com/RssFeed/subjectcode/22-Mergers+Acquisitions", "ma"),
 ]
 
 # PRNewswire topic feeds (free RSS)

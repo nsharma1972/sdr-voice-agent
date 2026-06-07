@@ -93,7 +93,7 @@ async def refresh_signals(days: int = 180) -> dict:
     from src.qualify.pipeline import run_pipeline
     from src.qualify.scorer import Tier
 
-    result = await run_pipeline(days=days, min_tier=Tier.NURTURE)
+    result = await run_pipeline(days=days, min_tier=Tier.ARCHIVE)  # cache all tiers
     _pipeline_cache.clear()
     _pipeline_cache.update({**result, "leads": [l.to_dict() for l in result["leads"]]})
     return {

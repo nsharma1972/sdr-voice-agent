@@ -97,10 +97,11 @@ async def enqueue_call(
     Returns the queue ID, or None if skipped.
     """
     async with get_db() as db:
-        row = await db.execute_fetchone(
+        cursor = await db.execute(
             "SELECT id FROM call_queue WHERE company_name=? AND status IN ('pending','dialing')",
             (company_name,),
         )
+        row = await cursor.fetchone()
         if row:
             return None  # already queued
         qid = new_id()
