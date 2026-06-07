@@ -19,6 +19,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    EndFrame,
     InterimTranscriptionFrame,
     TextFrame,
     TranscriptionFrame,
@@ -101,6 +102,7 @@ class SDRTurnPolicy(FrameProcessor):
         self._transcript: list[tuple[str, str]] = [("agent", opener)]
         self._http: httpx.AsyncClient | None = None
         self._meeting_offered = False     # set True once agent asks about a meeting
+        self._should_end = False          # set True after booking to hang up post-TTS
 
         system = _SYSTEM_PROMPT.format(
             signal_summary = signal.get("summary", "AI governance signal"),
@@ -141,6 +143,10 @@ class SDRTurnPolicy(FrameProcessor):
             self._bot_speaking = False
             self._ignore_until = asyncio.get_running_loop().time() + 0.4
             await self.push_frame(frame, direction)
+            if self._should_end:
+                await asyncio.sleep(1.2)   # pause so the last word isn't clipped
+                logger.info("call ending — meeting booked")
+                await self.push_frame(EndFrame())
             return
 
         if isinstance(frame, BotStartedSpeakingFrame):
@@ -183,6 +189,8 @@ class SDRTurnPolicy(FrameProcessor):
                 self._transcript.append(("agent", reply))
                 logger.info("SDR [LLM=%.0fms total=%.0fms] → %s",
                             (t_llm - t0) * 1000, (t_llm - t0) * 1000, reply)
+                if self._outcome == "booked":
+                    self._should_end = True
                 await self.push_frame(TextFrame(reply))
                 logger.info("TTS frame queued at %.0fms", (time.monotonic() - t0) * 1000)
             except Exception as exc:
