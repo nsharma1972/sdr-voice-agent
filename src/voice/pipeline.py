@@ -134,85 +134,70 @@ class SDRTurnPolicy(FrameProcessor):
         sender_name = config.SENDER_NAME or "our team"
 
         if any(phrase in text for phrase in ("who are you", "what is this", "why are you calling")):
-            return (
-                f"I'm an AI assistant calling for {sender_name}, about a company signal "
-                "that may affect AI governance and data controls."
-            )
+            return f"I'm an AI assistant for {sender_name}, following up on an AI governance signal at your company."
 
         if any(phrase in text for phrase in ("what do you do", "what is your company", "tell me more")):
-            return (
-                "We help teams compare how similar companies are handling AI governance and data controls, "
-                f"would a short call with {sender_name} be useful?"
-            )
+            return f"We help teams navigate AI governance — worth a short call with {sender_name}?"
 
         if any(phrase in text for phrase in ("send me", "email me", "send info", "send information")):
             self._turn = 2
-            return "Of course — what email should I send it to?"
+            return "Sure — what email should I use?"
 
         if any(phrase in text for phrase in ("not the right person", "not my area", "someone else")):
-            return "Got it — who is the right person for AI governance or data controls?"
+            return "Got it — who owns AI governance at your company?"
 
         if any(phrase in text for phrase in ("already handled", "we have it covered", "not a priority")):
-            return (
-                "That makes sense. Is it fully handled internally, "
-                "or would it be useful to compare notes with similar teams?"
-            )
+            return "Makes sense. Fully internal, or still useful to compare notes with peers?"
 
         if any(phrase in text for phrase in ("how much", "price", "pricing", "cost")):
-            return "Pricing really depends on scope — the useful first step is a short fit call, would that work?"
+            return "Depends on scope — a short fit call is the right first step."
 
         if any(phrase in text for phrase in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
             self._outcome = "not_interested"
-            return "Understood, I won't take more of your time — thanks for speaking with me."
+            return "Understood — thanks for your time."
 
         if any(word in text for word in ("busy", "bad time", "call me later", "not now")):
-            return "No problem at all — what would be a better time for a quick follow-up?"
+            return "No problem — what's a better time to follow up?"
 
         if "are you there" in text or "can you hear" in text:
-            return "Yes, I can hear you — I was just calling to ask one quick question about AI governance. Do you have a moment?"
+            return "Yes, I can hear you — do you have a moment?"
 
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
         if email:
             self._turn = 99
             self._outcome = "booked"
-            return "Perfect, I'll get that invite sent over — is there anything specific you would want covered on the call?"
+            return "Perfect — I'll get that invite sent over."
 
         positive = self._is_positive(text)
 
         if self._turn == 0:
+            # Response to "do you have 90 seconds?"
             self._turn = 1
-            # Strong booking intent at turn 0 (user said "let's do it" to opener) → skip to email
             if self._is_booking_intent(text):
-                self._turn = 3
-                return f"Love that energy. What email should I use for the calendar invite with {sender_name}?"
+                self._turn = 2
+                return f"Love that. Worth a quick call with {sender_name} to compare AI governance notes?"
             if positive:
-                return (
-                    f"Great, the quick reason I called is AI governance and data controls — "
-                    "is that active for your team right now?"
-                )
-            return (
-                "No worries, I will be quick. We work with teams on AI governance and data controls — "
-                "is that on your radar?"
-            )
+                return "Quick question — is AI governance or data controls active on your team's radar?"
+            return "Won't take long. Is AI governance something your team is actively working on?"
 
         if self._turn == 1:
+            # Response to "is AI governance active?"
             self._turn = 2
             if positive or self._is_booking_intent(text):
-                self._outcome = "interested"
-                return f"Good to hear. What email should I use for a calendar invite with {sender_name}?"
-            self._outcome = "not_interested"
-            return "Understood — who on your team owns AI governance or data quality?"
+                return f"Worth a quick 15-minute call with {sender_name} to compare notes?"
+            return "Got it — who on your team would own that topic?"
 
         if self._turn == 2:
+            # Response to meeting ask
             self._turn = 3
             if positive or self._is_booking_intent(text):
                 self._outcome = "interested"
-                return f"Perfect, what email should I send the invite to?"
+                return "Great — what email should I send the calendar invite to?"
             self._outcome = "not_interested"
-            return "Got it, I will note that and close out here — thanks for a few minutes."
+            return "No problem — thanks for a few minutes of your time."
 
-        return "Thanks for that. Should I send a short note, or go ahead and send the calendar invite?"
+        return "Should I send the calendar invite, or a short note first?"
 
     def _is_booking_intent(self, text: str) -> bool:
         """Strong booking signal — user explicitly wants to schedule, not just agreeing."""
@@ -339,12 +324,12 @@ def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
     context = f"I noticed recent activity at {company}"
 
     return (
-        "Hi {first_name}, I'm an AI assistant calling for {sender_name}. "
-        "{context} around AI governance. Do you have 90 seconds?"
+        "Hi {first_name}, I'm an AI assistant for {sender_name} — "
+        "calling about {company}'s AI governance activity. Do you have 60 seconds?"
     ).format(
         first_name=prospect.get("first_name", "there"),
         sender_name=config.SENDER_NAME or "our team",
-        context=context,
+        company=company,
     )
 
 
