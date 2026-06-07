@@ -93,9 +93,9 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _send_reply(self, user_text: str) -> None:
         reply = self._reply(user_text)
-        # Scale ignore window to approximate TTS duration: ~0.08s/word + 0.8s buffer
+        # TTS speaks at ~0.25s/word; add 1.5s buffer for network + margin
         word_count = len(reply.split())
-        self._ignore_until = asyncio.get_running_loop().time() + (word_count * 0.08) + 0.8
+        self._ignore_until = asyncio.get_running_loop().time() + max(word_count * 0.25 + 1.5, 4.0)
         self._transcript.append(("agent", reply))
         logger.info("sdr reply: %s", reply)
         await self.push_frame(TextFrame(reply))
@@ -411,7 +411,7 @@ async def run_sdr_pipeline(
         # Block STT responses during opener TTS to prevent echo feedback loop
         opener_words = len(opening_line.split())
         sdr_policy._ignore_until = (
-            asyncio.get_running_loop().time() + (opener_words * 0.1) + 2.0
+            asyncio.get_running_loop().time() + max(opener_words * 0.25 + 1.5, 5.0)
         )
         sdr_policy._transcript.append(("agent", opening_line))
         await task.queue_frames([TTSSpeakFrame(opening_line)])
