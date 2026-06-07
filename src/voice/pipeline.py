@@ -12,12 +12,12 @@ os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import TextFrame, TranscriptionFrame, TTSSpeakFrame
+from pipecat.frames.frames import InterimTranscriptionFrame, TextFrame, TranscriptionFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext, OpenAILLMContextFrame
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.openai import OpenAILLMService
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
@@ -42,6 +42,26 @@ class ConversationProbe(FrameProcessor):
             logger.info("%s transcript: %s", self._label, frame.text)
         elif isinstance(frame, TextFrame):
             logger.info("%s text: %s", self._label, frame.text)
+        await self.push_frame(frame, direction)
+
+
+class TranscriptToLLM(FrameProcessor):
+    """Turn final STT transcripts into immediate LLM requests."""
+
+    def __init__(self, context: OpenAILLMContext):
+        super().__init__()
+        self._context = context
+
+    async def process_frame(self, frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            text = frame.text.strip()
+            if text:
+                self._context.add_message({"role": "user", "content": text})
+                await self.push_frame(OpenAILLMContextFrame(self._context))
+            return
+        if isinstance(frame, InterimTranscriptionFrame):
+            return
         await self.push_frame(frame, direction)
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
@@ -181,7 +201,7 @@ async def run_sdr_pipeline(
         transport.input(),
         stt,
         ConversationProbe("stt"),
-        context_aggregator.user(),
+        TranscriptToLLM(context),
         llm,
         ConversationProbe("llm"),
         tts,
