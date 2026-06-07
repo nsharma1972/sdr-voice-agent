@@ -528,7 +528,7 @@ async function loadCalls() {
         </div>
         <span class="outcome-pill outcome-${esc(oc)}">${esc(oc.replace('_',' '))}</span>
       </div>
-      <div class="call-transcript">${esc(transcript)}</div>
+      <div class="call-transcript">${esc(transcript).replace(/\n/g, '<br>')}</div>
       <div class="review-row">
         <textarea class="review-note" placeholder="Review notes for qualification...">${esc(c.notes || '')}</textarea>
         <div class="review-actions">

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import certifi
@@ -47,13 +48,12 @@ STRICT RULES — follow every one or the call fails:
 3. No filler words (well, so, um, actually, certainly, absolutely).
 4. No emojis, punctuation beyond a period or question mark.
 5. Ask only ONE question per turn.
-6. Goal sequence: confirm interest → ask for a 15-min meeting → get their email → close.
-7. If they agree to meet: ask "What email should I send the invite to?"
-8. If they give an email address (contains @ symbol): respond ONLY with "Perfect, I will get that sent over."
-9. If they decline or say not interested: respond ONLY with "Understood, thanks for your time."
-10. Never pitch features, pricing, or competitors.
+6. Goal sequence: confirm interest → ask for a 15-min meeting → close.
+7. If they agree to meet: respond ONLY with "I already have your details — I will send you a calendar invite now."
+8. If they decline or say not interested: respond ONLY with "Understood, thanks for your time."
+9. Never pitch features, pricing, or competitors.
+10. Never ask for their email address. You already have it on file.
 11. Never repeat yourself.
-12. Do NOT say "Perfect, I will get that sent over" unless they literally gave you an email address with an @ symbol.
 
 Signal context: {signal_summary}
 You are calling on behalf of: {sender_name}
@@ -99,6 +99,8 @@ class SDRTurnPolicy(FrameProcessor):
         self._ignore_until = 0.0
         self._turn_lock = asyncio.Lock()   # prevents concurrent LLM calls
         self._transcript: list[tuple[str, str]] = [("agent", opener)]
+        self._http: httpx.AsyncClient | None = None
+        self._meeting_offered = False     # set True once agent asks about a meeting
 
         system = _SYSTEM_PROMPT.format(
             signal_summary = signal.get("summary", "AI governance signal"),
@@ -164,29 +166,41 @@ class SDRTurnPolicy(FrameProcessor):
         if self._turn_lock.locked():
             return
         async with self._turn_lock:
+            t0 = time.monotonic()
             self._ignore_until = asyncio.get_running_loop().time() + 0.4
             self._transcript.append(("prospect", user_text))
             logger.info("USER → %s", user_text)
             try:
-                reply = self._check_email(user_text)
+                reply = self._check_agreement(user_text)
                 if reply is None:
                     reply = await self._call_llm(user_text)
                     self._detect_outcome(reply)
+                    # Belt-and-suspenders: if LLM still asks for email, override it
+                    if self._meeting_offered and "email" in reply.lower():
+                        reply = self._BOOKING_REPLY
+                        self._outcome = "booked"
+                t_llm = time.monotonic()
                 self._transcript.append(("agent", reply))
-                logger.info("SDR → %s", reply)
+                logger.info("SDR [LLM=%.0fms total=%.0fms] → %s",
+                            (t_llm - t0) * 1000, (t_llm - t0) * 1000, reply)
                 await self.push_frame(TextFrame(reply))
+                logger.info("TTS frame queued at %.0fms", (time.monotonic() - t0) * 1000)
             except Exception as exc:
                 logger.warning("turn handler error: %s", exc)
                 await self.push_frame(TextFrame("Sorry — could you say that again?"))
 
-    def _check_email(self, user_text: str) -> str | None:
-        """Return a closing line if user gave an email, else None."""
-        # Match typed or spoken: "alex at rippling dot com"
-        normalised = re.sub(r"\s+at\s+", "@", user_text, flags=re.IGNORECASE)
-        normalised = re.sub(r"\s+dot\s+", ".", normalised, flags=re.IGNORECASE)
-        if re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", normalised):
+    _BOOKING_REPLY = "I already have your details — I will send you a calendar invite now."
+    _AGREE = ("sure", "yes", "yeah", "sounds good", "works for me",
+              "let's do it", "go ahead", "absolutely", "ok", "okay", "i would", "i will")
+
+    def _check_agreement(self, user_text: str) -> str | None:
+        """Intercept meeting agreement — skip LLM entirely, return booking reply."""
+        if self._outcome == "booked":
+            return None   # already closed, let LLM handle any follow-up
+        low = user_text.lower()
+        if self._meeting_offered and any(p in low for p in self._AGREE):
             self._outcome = "booked"
-            return "Perfect, I will get that sent over."
+            return self._BOOKING_REPLY
         return None
 
     def _trimmed_messages(self) -> list[dict]:
@@ -196,6 +210,11 @@ class SDRTurnPolicy(FrameProcessor):
         if len(recent) > 8:           # 4 user + 4 assistant
             recent = recent[-8:]
         return system + recent
+
+    def _http_client(self) -> httpx.AsyncClient:
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=8.0)
+        return self._http
 
     async def _call_llm(self, user_text: str) -> str:
         self._messages.append({"role": "user", "content": user_text})
@@ -207,19 +226,20 @@ class SDRTurnPolicy(FrameProcessor):
             url     = f"{config.LITELLM_BASE_URL}/chat/completions"
             headers = {"Authorization": f"Bearer {config.LITELLM_API_KEY}"}
             model   = config.LLM_MODEL
+        t_pre = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "model":       model,
-                        "messages":    self._trimmed_messages(),
-                        "max_tokens":  25,
-                        "temperature": 0.3,
-                        "stream":      False,
-                    },
-                )
+            resp = await self._http_client().post(
+                url,
+                headers=headers,
+                json={
+                    "model":       model,
+                    "messages":    self._trimmed_messages(),
+                    "max_tokens":  25,
+                    "temperature": 0.3,
+                    "stream":      False,
+                },
+            )
+            logger.info("LLM API %.0fms", (time.monotonic() - t_pre) * 1000)
             resp.raise_for_status()
             reply = resp.json()["choices"][0]["message"]["content"].strip()
             reply = re.sub(r"[*_`#]", "", reply)
@@ -251,8 +271,9 @@ class SDRTurnPolicy(FrameProcessor):
         low = reply.lower()
         if any(p in low for p in ("thanks for your time", "thank you for", "won't take more", "goodbye", "take care")):
             self._outcome = "not_interested"
-        elif any(p in low for p in ("invite", "calendar", "email", "schedule", "book")):
+        elif any(p in low for p in ("meeting", "15-minute", "15 minute", "schedule", "calendar", "invite", "book")):
             self._outcome = "interested"
+            self._meeting_offered = True
 
     # ── transcript persistence ─────────────────────────────────────────────────
 
@@ -271,6 +292,25 @@ class SDRTurnPolicy(FrameProcessor):
             logger.info("call %s flushed: outcome=%s", self._call_id, self._outcome)
         except Exception as exc:
             logger.warning("flush failed: %s", exc)
+
+
+# ── Groq connection warmup ────────────────────────────────────────────────────
+
+async def _warmup_groq(sdr_policy: "SDRTurnPolicy") -> None:
+    """Fire a 1-token dummy request so the TCP/TLS connection is alive before the user speaks."""
+    if not config.GROQ_API_KEY:
+        return
+    try:
+        t0 = time.monotonic()
+        resp = await sdr_policy._http_client().post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": "hi"}],
+                  "max_tokens": 1},
+        )
+        logger.info("Groq warmup %.0fms (status %s)", (time.monotonic() - t0) * 1000, resp.status_code)
+    except Exception as exc:
+        logger.debug("warmup skipped: %s", exc)
 
 
 # ── Pipeline entry point ──────────────────────────────────────────────────────
@@ -321,6 +361,9 @@ async def run_sdr_pipeline(
 
     opening_line = build_opening_line(prospect, signal)
     sdr_policy   = SDRTurnPolicy(signal, opener=opening_line, call_id=call_id)
+
+    # Pre-warm Groq connection so first real response isn't cold (~800ms saved)
+    asyncio.get_event_loop().create_task(_warmup_groq(sdr_policy))
 
     pipeline = Pipeline([
         transport.input(),
