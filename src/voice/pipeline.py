@@ -192,6 +192,14 @@ class SDRTurnPolicy(FrameProcessor):
             return "Perfect, I will get that sent over."
         return None
 
+    def _trimmed_messages(self) -> list[dict]:
+        """System prompt + last 4 exchanges — keeps context small and latency flat."""
+        system = self._messages[:2]   # system + opener
+        recent = self._messages[2:]
+        if len(recent) > 8:           # 4 user + 4 assistant
+            recent = recent[-8:]
+        return system + recent
+
     async def _call_llm(self, user_text: str) -> str:
         self._messages.append({"role": "user", "content": user_text})
         if config.GROQ_API_KEY:
@@ -209,7 +217,7 @@ class SDRTurnPolicy(FrameProcessor):
                     headers=headers,
                     json={
                         "model":       model,
-                        "messages":    self._messages,
+                        "messages":    self._trimmed_messages(),
                         "max_tokens":  40,
                         "temperature": 0.3,
                         "stream":      False,
