@@ -89,6 +89,31 @@ async def run_pipeline(
 
     logger.info("signals fetched: %s → total %d", signal_counts, len(all_signals))
 
+    # Enrichment (Issue: lift single-signal companies → CONTACT).
+    # Anchor on real company names we already have (SEC names are cleanest) and
+    # search news/hiring for each, so the same company gains a 2nd/3rd signal.
+    if os.environ.get("DISABLE_ENRICHMENT", "").lower() not in ("1", "true", "yes"):
+        from src.signals.enrich import enrich_companies
+        from src.signals.normalize import is_valid_company
+        anchor_names: list[str] = []
+        seen_anchor: set[str] = set()
+        for s in all_signals:
+            if not is_valid_company(s.company_name):
+                continue
+            k = s.company_name.lower().strip()
+            if k not in seen_anchor:
+                seen_anchor.add(k)
+                anchor_names.append(s.company_name)
+        try:
+            extra = await enrich_companies(anchor_names, days=days)
+            signal_counts["Enrichment"] = len(extra)
+            all_signals.extend(extra)
+        except Exception as exc:
+            logger.error("Enrichment failed: %s", exc)
+            errors.append(f"Enrichment: {exc}")
+            signal_counts["Enrichment"] = 0
+        logger.info("after enrichment: total %d signals", len(all_signals))
+
     leads = qualify_leads(all_signals)
 
     tier_order = [Tier.CONTACT, Tier.NURTURE, Tier.ARCHIVE]

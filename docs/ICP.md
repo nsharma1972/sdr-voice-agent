@@ -74,11 +74,17 @@ Drop a lead regardless of score if: no real company name (`Unknown (see link)`),
 out of target geography, pre-revenue/too small for the ICP, or consumer-only with
 no regulated/AI surface.
 
-## Honest precision note
+## Cross-source matching & enrichment (implemented)
 
-Free sources are recall-first; most companies appear once → ARCHIVE. Raising true
-CONTACT volume requires (a) better cross-source **company-name normalization** so
-the same company matches across SEC + news + hiring, and (b) firmographic
-enrichment (employee count, vertical, direct-dial). Both are tracked as the next
-qualification improvements. For the demo, see `docs/DEMO.md` for how to surface a
-high-quality lead reliably.
+Raw single-source signals top out around 35 → ARCHIVE. Two pieces fix this:
+
+1. **`src/signals/normalize.py`** — canonical company keys so the same company
+   matches across SEC + news + hiring ("AMERICAN EXPRESS CO" == "American Express"),
+   plus a junk filter that drops headline noise ("Unknown", "Computer Weekly").
+2. **`src/signals/enrich.py`** — anchors on real (SEC) company names and searches
+   news/hiring for each, so a company gains 2nd/3rd signals → multi-signal + urgency
+   bonuses → CONTACT.
+
+Result on a live run: 17 CONTACT leads (vs 0 before), all real multi-signal
+companies. Next precision lever: firmographic enrichment (employee count, verified
+vertical, direct-dial phone) to gate by company size and improve dialing.

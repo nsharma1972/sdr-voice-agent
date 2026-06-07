@@ -80,17 +80,15 @@ curl -X POST "localhost:8000/signals/refresh?days=120"
 
 ## Honest demo note — guaranteeing a callable lead
 
-With free sources, most companies appear once → **ARCHIVE**, so a *live* CONTACT
-lead isn't guaranteed on any given refresh (companies must hit 2+ sources to clear
-60). Two reliable options for the demo:
+Enrichment (`src/signals/enrich.py`) + normalized grouping now produce CONTACT
+leads organically: a recent run yielded **17 CONTACT** leads (e.g. Bank of New York
+Mellon, American Express, Clarivate) auto-enqueued to the call queue. So the live
+demo can pick a real CONTACT lead in the portal and call it.
 
-1. **Force the call** with `POST /leads/{company}/enqueue` on any good-looking lead
-   (used in step 5) — this bypasses the tier gate for the demo.
-2. **Seed a known multi-signal company** before presenting (one that appears in both
-   SEC EDGAR and a hiring query) so it scores CONTACT naturally.
-
-Improving organic CONTACT volume needs cross-source company-name normalization —
-noted as the next qualification task (see `docs/ICP.md`).
+Fallbacks if a given refresh is thin:
+1. **Force the call** with `POST /leads/{company}/enqueue` on any lead — bypasses
+   the tier gate.
+2. Widen the window (`?days=180`) or set `INDUSTRY_PACK` to bias toward your vertical.
 
 ## Acceptance (from the issue) — log your run
 

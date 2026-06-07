@@ -25,11 +25,13 @@ logger = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; SDR-Voice-Agent/0.1)"}
 
-# BusinessWire category feeds (free RSS, no auth)
+# Press-release category feeds (free RSS, no auth).
+# NOTE: BusinessWire's /rss/home endpoint now 404s, so we rely on GlobeNewswire
+# (technology + M&A + financings) and PRNewswire below.
 _BW_FEEDS = [
-    ("https://www.businesswire.com/rss/home/?rss=G1",    "all-news"),
     ("https://www.globenewswire.com/RssFeed/subjectcode/28-Technology", "technology"),
     ("https://www.globenewswire.com/RssFeed/subjectcode/22-Mergers+Acquisitions", "ma"),
+    ("https://www.globenewswire.com/RssFeed/subjectcode/13-Financings", "financings"),
 ]
 
 # PRNewswire topic feeds (free RSS)
