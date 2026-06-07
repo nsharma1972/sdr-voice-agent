@@ -65,7 +65,7 @@ class SDRTurnPolicy(FrameProcessor):
             return
         if isinstance(frame, InterimTranscriptionFrame):
             text = frame.text.strip()
-            if text and self._accept_user_text():
+            if text and self._accept_user_text() and self._stable_interim_candidate(text):
                 self._pending_interim_text = text
                 self._cancel_pending_interim()
                 self._pending_interim_task = asyncio.create_task(self._reply_after_interim_pause(text))
@@ -94,6 +94,14 @@ class SDRTurnPolicy(FrameProcessor):
 
     def _accept_user_text(self) -> bool:
         return asyncio.get_running_loop().time() >= self._ignore_until
+
+    def _stable_interim_candidate(self, text: str) -> bool:
+        normalized = text.lower().strip(" .,!?:;")
+        if normalized in {"now", "um", "uh", "so", "well", "yeah", "yes", "no", "okay", "ok"}:
+            return False
+        if self._is_positive(normalized):
+            return True
+        return len(normalized.split()) >= 3
 
     def _reply(self, user_text: str) -> str:
         text = user_text.lower()
@@ -142,7 +150,7 @@ class SDRTurnPolicy(FrameProcessor):
             self._turn = 99
             return "Thanks, I'll note that for the follow-up invite, anything specific you would want covered?"
 
-        positive = any(word in text for word in ("yes", "yeah", "yep", "sure", "okay", "ok", "i do", "go ahead"))
+        positive = self._is_positive(text)
 
         if self._turn == 0:
             self._turn = 1
@@ -152,8 +160,8 @@ class SDRTurnPolicy(FrameProcessor):
                     "AI governance and data controls?"
                 )
             return (
-                "Got it. The reason I called is AI governance and data controls. "
-                "Is that active for your team right now?"
+                "Got it, the reason I called is AI governance and data controls, "
+                "is that active for your team right now?"
             )
 
         if self._turn == 1:
@@ -169,6 +177,9 @@ class SDRTurnPolicy(FrameProcessor):
             return "No problem, I can mark this as not a fit for now, thanks for the time."
 
         return "That helps, should I send a calendar invite, or would you rather I send a short note first?"
+
+    def _is_positive(self, text: str) -> bool:
+        return any(word in text for word in ("yes", "yeah", "yep", "sure", "okay", "ok", "i do", "go ahead"))
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
