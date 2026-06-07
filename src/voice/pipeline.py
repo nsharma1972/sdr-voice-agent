@@ -50,19 +50,44 @@ class SDRTurnPolicy(FrameProcessor):
         super().__init__()
         self._signal = signal
         self._turn = 0
+        self._pending_interim_text = ""
+        self._pending_interim_task: asyncio.Task | None = None
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
+            self._cancel_pending_interim()
             if text:
-                reply = self._reply(text)
-                logger.info("sdr reply: %s", reply)
-                await self.push_frame(TextFrame(reply))
+                await self._send_reply(text)
             return
         if isinstance(frame, InterimTranscriptionFrame):
+            text = frame.text.strip()
+            if text:
+                self._pending_interim_text = text
+                self._cancel_pending_interim()
+                self._pending_interim_task = asyncio.create_task(self._reply_after_interim_pause(text))
             return
         await self.push_frame(frame, direction)
+
+    def _cancel_pending_interim(self) -> None:
+        if self._pending_interim_task and not self._pending_interim_task.done():
+            self._pending_interim_task.cancel()
+        self._pending_interim_task = None
+
+    async def _reply_after_interim_pause(self, text: str) -> None:
+        try:
+            await asyncio.sleep(1.2)
+            if text == self._pending_interim_text:
+                self._pending_interim_text = ""
+                await self._send_reply(text)
+        except asyncio.CancelledError:
+            pass
+
+    async def _send_reply(self, user_text: str) -> None:
+        reply = self._reply(user_text)
+        logger.info("sdr reply: %s", reply)
+        await self.push_frame(TextFrame(reply))
 
     def _reply(self, user_text: str) -> str:
         text = user_text.lower()
