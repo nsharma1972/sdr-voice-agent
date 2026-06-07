@@ -39,15 +39,44 @@ _ENRICH_TERMS = (
 )
 
 
+# Stock-market / investor chatter that mentions the company but is NOT a buying
+# signal about the company's own activity. These wrongly tripped "raises"/"acquires"
+# and inflated FUNDING_ROUND, so we drop them entirely.
+_MARKET_NOISE = re.compile(
+    r"\b(raises?|boosts?|cuts?|trims?|lowers?|lifts?|reduces?)\s+(stake|position|holdings|target)\b"
+    r"|\bstake in\b|\bshares? of\b|\bshares? (in|worth)\b|\b(buys?|sells?|acquires?|owns?|holds?)\s+[\d,]+\s+shares\b"
+    r"|\binsider (buying|selling|trading)\b|\bprice target\b|\b(analyst|analysts)\b"
+    r"|\b(downgrade[ds]?|upgrade[ds]?|reiterate[ds]?)\b|\b13[DFG]\b|\bhedge fund\b"
+    r"|\bshort interest\b|\bdividend\b|\bearnings (call|estimate|per share)\b|\bEPS\b"
+    r"|\b(NYSE|NASDAQ):|\bmarket cap\b|\bstock (rose|fell|jumps|drops|gains|slips)\b",
+    re.IGNORECASE,
+)
+
+# Genuine company funding / M&A events (the company itself, not an investor)
+_FUNDING = re.compile(
+    r"\braises?\s+\$?[\d.]+\s*(million|billion|[mb]\b)"
+    r"|\braised\s+\$"
+    r"|\bseries\s+[a-e]\b|\bseed round\b|\bpre-seed\b"
+    r"|\bcloses?\s+\$?[\d.]+|\bsecures?\s+\$?[\d.]+\s*(million|billion|[mb]\b)"
+    r"|\bfunding round\b|\b(goes public|files for ipo|ipo pricing|completes ipo)\b"
+    r"|\b(to acquire|acquires)\s+[A-Z]",   # M&A: acquiring another *company* (capitalized name)
+    re.IGNORECASE,
+)
+
+
+def is_market_noise(title: str) -> bool:
+    return bool(_MARKET_NOISE.search(title))
+
+
 def _classify(title: str, summary: str) -> SignalType:
     t = f"{title} {summary}".lower()
     if any(k in t for k in ("fined", "penalty", "enforcement", "lawsuit", "sanction", "violation")):
         return SignalType.REGULATORY_ACTION          # S1
-    if any(k in t for k in ("raises", "raised", "funding", "series ", "ipo", "acquires", "acquisition", "spac")):
-        return SignalType.FUNDING_ROUND              # S4
+    if _FUNDING.search(f"{title} {summary}"):
+        return SignalType.FUNDING_ROUND              # S4 (real raise / M&A only)
     if any(k in t for k in ("hiring", "is hiring", "job opening", "careers", "open role")):
         return SignalType.HIRING_SIGNAL              # S5
-    if any(k in t for k in ("appoints", "names", "new ceo", "new cto", "hires", "interview")):
+    if any(k in t for k in ("appoints", "names ", "new ceo", "new cto", "interview", "joins as")):
         return SignalType.EXEC_INTERVIEW             # S6
     if any(k in t for k in ("launch", "launches", "unveils", "clearance", "approved")):
         return SignalType.PRODUCT_CLEARANCE          # S3
@@ -74,6 +103,8 @@ async def _enrich_one(client: httpx.AsyncClient, company: str, days: int, per_co
         pub = (item.findtext("pubDate") or "").strip()
         desc = re.sub(r"<[^>]+>", "", (item.findtext("description") or "")).strip()
         if not title or cl not in title.lower():
+            continue
+        if is_market_noise(title):       # drop investor/stock-market chatter
             continue
         date = _parse_rss_date(pub) if pub else datetime.now(timezone.utc)
         if (datetime.now(timezone.utc) - date).days > days:
