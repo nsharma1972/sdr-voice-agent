@@ -3,13 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
+import certifi
+
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import TextFrame, TranscriptionFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.openai import OpenAILLMService
@@ -20,6 +27,22 @@ from src.signals.base import SignalType
 from src.voice.tools import book_meeting
 
 logger = logging.getLogger(__name__)
+
+
+class ConversationProbe(FrameProcessor):
+    """Log transcript/LLM text frames while passing all frames through unchanged."""
+
+    def __init__(self, label: str):
+        super().__init__()
+        self._label = label
+
+    async def process_frame(self, frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            logger.info("%s transcript: %s", self._label, frame.text)
+        elif isinstance(frame, TextFrame):
+            logger.info("%s text: %s", self._label, frame.text)
+        await self.push_frame(frame, direction)
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
@@ -157,8 +180,10 @@ async def run_sdr_pipeline(
     pipeline = Pipeline([
         transport.input(),
         stt,
+        ConversationProbe("stt"),
         context_aggregator.user(),
         llm,
+        ConversationProbe("llm"),
         tts,
         transport.output(),
         context_aggregator.assistant(),
