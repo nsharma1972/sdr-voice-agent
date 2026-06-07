@@ -5,10 +5,11 @@ Industry-agnostic sources (always on):
   - SEC EDGAR 10-K AI/risk disclosures
   - Google News RSS (exec interviews, AI/compliance mentions)
   - BusinessWire + PRNewswire RSS (funding rounds, AI initiatives)
+  - LinkedIn / job-posting hiring signals (S5)            [Issue #7]
 
-Industry-specific packs (opt-in via env):
+Industry packs (opt-in):
+  - INDUSTRY_PACK=fintech|healthtech|saas  → vertical news + hiring queries  [Issue #6]
   - ENABLE_FDA_SIGNALS=true → openFDA (enforcement + 510k) — biotech/pharma/medtech
-  # Future packs: ENABLE_FTC_SIGNALS, ENABLE_FINRA_SIGNALS, etc.
 
 Flow: sources → deduplicate → score → tier filter
 """
@@ -25,6 +26,8 @@ from src.signals.base import HIGH_URGENCY, Signal, SignalType
 from src.signals.news import fetch_exec_interviews
 from src.signals.press import fetch_press_releases
 from src.signals.sec import fetch_10k_ai_risk
+from src.signals.linkedin import fetch_hiring_signals          # Issue #7
+from src.signals.queries import get_active_pack, pack_news_queries, pack_hiring_queries  # Issue #6
 
 logger = logging.getLogger(__name__)
 
@@ -39,22 +42,29 @@ async def run_pipeline(
     Returns:
       leads         — list[Lead] at or above min_tier, score desc
       signal_counts — dict of source → count
+      industry_pack — active vertical pack ("generic" if none)
       contact_count — leads ready for immediate outreach
       nurture_count — leads to monitor
       run_at        — ISO timestamp
       errors        — non-fatal source errors
     """
     run_at = datetime.now(timezone.utc).isoformat()
-    logger.info("qualification pipeline starting (days=%d)", days)
+
+    # Industry pack selection (Issue #6) — None => generic, industry-agnostic
+    pack_name, _ = get_active_pack()
+    news_pack   = pack_news_queries()    # extra vertical news queries (or [])
+    hiring_pack = pack_hiring_queries()  # vertical buyer roles (or [] => generic roles)
+    logger.info("qualification pipeline starting (days=%d, pack=%s)", days, pack_name or "generic")
 
     # Build task list — always-on sources
     tasks: list[tuple[str, object]] = [
-        ("SEC_EDGAR",  fetch_10k_ai_risk(days)),
-        ("News_RSS",   fetch_exec_interviews(days)),
-        ("Press_RSS",  fetch_press_releases(min(days, 30))),
+        ("SEC_EDGAR",     fetch_10k_ai_risk(days)),
+        ("News_RSS",      fetch_exec_interviews(days, custom_queries=news_pack or None)),
+        ("Press_RSS",     fetch_press_releases(min(days, 30))),
+        ("LinkedIn_Jobs", fetch_hiring_signals(days, custom_queries=hiring_pack or None)),
     ]
 
-    # Industry-specific packs
+    # Industry-specific regulatory pack
     if os.environ.get("ENABLE_FDA_SIGNALS", "").lower() in ("1", "true", "yes"):
         from src.signals.openfda import fetch_all as fetch_fda
         tasks.append(("openFDA", fetch_fda(days)))
@@ -97,6 +107,7 @@ async def run_pipeline(
     return {
         "leads":         filtered,
         "signal_counts": signal_counts,
+        "industry_pack": pack_name or "generic",
         "total_leads":   len(leads),
         "contact_count": sum(1 for l in leads if l.tier == Tier.CONTACT),
         "nurture_count": sum(1 for l in leads if l.tier == Tier.NURTURE),
