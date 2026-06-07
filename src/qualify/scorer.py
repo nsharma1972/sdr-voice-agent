@@ -110,16 +110,25 @@ def score_company(company_name: str, signals: list[Signal]) -> Lead:
 
 
 def qualify_leads(signals: list[Signal]) -> list[Lead]:
-    """Group by company, score each, return all leads sorted by score desc."""
+    """Group by NORMALIZED company name, drop junk, score, sort by score desc.
+
+    Normalized grouping lets the same company from different sources merge
+    ("AMERICAN EXPRESS CO" + "American Express") → multi-signal → higher tier.
+    """
+    from src.signals.normalize import normalize_company, is_valid_company, pick_display_name
+
     grouped: dict[str, list[Signal]] = {}
     for sig in signals:
-        key = sig.company_name.strip().lower()
+        if not is_valid_company(sig.company_name):
+            continue
+        key = normalize_company(sig.company_name)
+        if not key:
+            continue
         grouped.setdefault(key, []).append(sig)
 
     leads = [
-        score_company(sigs[0].company_name, sigs)
-        for key, sigs in grouped.items()
-        if key not in ("unknown (see link)", "unknown", "")
+        score_company(pick_display_name([s.company_name for s in sigs]), sigs)
+        for sigs in grouped.values()
     ]
     leads.sort(key=lambda l: l.score, reverse=True)
     return leads
