@@ -1,8 +1,8 @@
 model_list:
   - model_name: mistral-small-local
     litellm_params:
-      model: openai/mistral-small-3
-      api_base: http://localhost:8080/v1   # change to your Ollama/exo endpoint
+      model: openai/mistral:latest
+      api_base: http://localhost:11434/v1
       api_key: none
       timeout: 4.0
 

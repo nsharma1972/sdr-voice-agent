@@ -19,8 +19,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "python-multipart>=0.0.9",
     # Voice pipeline (free stack)
-    "pipecat-ai[daily,deepgram,silero,openai]>=0.0.50",
-    "edge-tts>=6.1.12",                 # Microsoft Edge TTS — free, no key
+    "pipecat-ai[livekit,deepgram,silero,openai]==0.0.50",
     "aiofiles>=23.2.1",
     "aiosqlite>=0.20.0",
 ]

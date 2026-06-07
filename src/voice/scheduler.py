@@ -17,6 +17,9 @@ _scheduler: AsyncIOScheduler | None = None
 
 def start_scheduler() -> None:
     global _scheduler
+    if not config.VAPI_API_KEY or not config.VAPI_PHONE_NUMBER_ID:
+        logger.info("Call queue scheduler disabled; Vapi is not configured")
+        return
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(
         _tick,

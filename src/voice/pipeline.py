@@ -1,4 +1,4 @@
-"""Pipecat voice pipeline — free stack: Daily.co + Deepgram + edge-tts + LiteLLM/Mistral."""
+"""Pipecat voice pipeline — LiveKit + Deepgram + LiteLLM/Mistral."""
 from __future__ import annotations
 
 import asyncio
@@ -10,10 +10,9 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.edge_tts import EdgeTTSTTSService
+from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.openai import OpenAILLMService
-from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
 
 from src import config
 from src.signals.base import SignalType
@@ -108,17 +107,22 @@ def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str
 
 
 async def run_sdr_pipeline(
-    room_url: str,
+    livekit_url: str,
     token: str,
+    room_name: str,
     prospect: dict[str, Any],
     signal: dict[str, Any],
 ) -> None:
-    """Start a Pipecat pipeline in a Daily.co room."""
-    transport = DailyTransport(
-        room_url, token, "SDR Voice Agent",
-        DailyParams(
+    """Start a Pipecat pipeline in a LiveKit room."""
+    transport = LiveKitTransport(
+        livekit_url,
+        token,
+        room_name,
+        LiveKitParams(
             audio_out_enabled=True,
             audio_in_enabled=True,
+            audio_out_sample_rate=24000,
+            audio_in_sample_rate=16000,
             vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
             vad_audio_passthrough=True,
@@ -127,7 +131,7 @@ async def run_sdr_pipeline(
 
     stt = DeepgramSTTService(api_key=config.DEEPGRAM_API_KEY)
 
-    tts = EdgeTTSTTSService(voice="en-US-GuyNeural", rate="+5%", pitch="-5Hz")
+    tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-helios-en")
 
     llm = OpenAILLMService(
         api_key=config.LITELLM_API_KEY or "none",
@@ -158,12 +162,11 @@ async def run_sdr_pipeline(
     task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_first_participant_joined")
-    async def on_joined(transport, participant):
-        transport.capture_participant_transcription(participant["id"])
+    async def on_joined(participant_id):
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_participant_left")
-    async def on_left(transport, participant, reason):
+    async def on_left(participant_id, reason):
         await task.cancel()
 
     runner = PipelineRunner()

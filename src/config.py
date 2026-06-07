@@ -13,8 +13,13 @@ def _req(name: str) -> str:
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./sdr.db")
 
-# Daily.co — free tier, 10K participant-minutes/month
+# Daily.co — legacy transport; not used by the no-card browser demo
 DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
+
+# LiveKit — no-card browser WebRTC demo transport
+LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "")
+LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
 
 # LLM routing — local Mistral via LiteLLM or Ollama directly
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1")
@@ -27,7 +32,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # STT — Deepgram free tier: 12K minutes/year; set to empty to skip
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# TTS — edge-tts is free with no key; these are unused by default
+# Legacy paid TTS providers; unused by the browser demo
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
 
@@ -42,6 +47,10 @@ CAL_LINK = os.environ.get("CAL_LINK", "")
 
 # Email (Resend)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+
+# Vapi outbound phone calling — Phase 2 only, not needed for browser demo
+VAPI_API_KEY = os.environ.get("VAPI_API_KEY", "")
+VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "")
 
 # Portal
 PORTAL_PASSWORD = os.environ.get("PORTAL_PASSWORD", "")
@@ -66,7 +75,13 @@ MAX_CALL_ATTEMPTS = 2
 def assert_voice_ready() -> list[str]:
     """Returns missing env vars needed before demo sessions can run."""
     missing = []
-    for var in ("DAILY_API_KEY", "LITELLM_BASE_URL"):
+    for var in (
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "DEEPGRAM_API_KEY",
+        "LITELLM_BASE_URL",
+    ):
         if not os.environ.get(var):
             missing.append(var)
     return missing

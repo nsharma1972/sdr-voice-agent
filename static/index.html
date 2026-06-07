@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SDR Voice Agent</title>
-  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -255,7 +255,7 @@
           <div class="transcript" id="transcript"><span class="meta">Transcript will appear here…</span></div>
         </div>
 
-        <p class="footnote">Pipecat · Daily.co · Mistral local · edge-tts · Cal.com — all free</p>
+        <p class="footnote">Pipecat · LiveKit · Deepgram · Mistral local · Cal.com</p>
       </div>
     </div>
 
@@ -273,6 +273,9 @@
             <button class="filter-btn" onclick="setTierFilter('CONTACT',this)">Contact</button>
             <button class="filter-btn" onclick="setTierFilter('NURTURE',this)">Nurture</button>
           </div>
+          <button class="btn btn-ghost" id="demo-seed-btn" onclick="seedDemoLeads()" title="Load 5 realistic CONTACT-tier leads for testing">
+            ⚡ Load Demo Data
+          </button>
           <button class="btn btn-ghost" id="refresh-btn" onclick="refreshSignals()">
             <span id="refresh-icon">↻</span> Refresh Signals
           </button>
@@ -340,6 +343,17 @@ function setTierFilter(tier, btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderLeads();
+}
+
+async function seedDemoLeads() {
+  const btn = document.getElementById('demo-seed-btn');
+  btn.disabled = true; btn.textContent = 'Loading…';
+  try {
+    await fetch('/demo/seed-leads', {method:'POST'});
+    await loadLeads();
+    document.getElementById('leads-run-info').textContent = '⚡ Demo data loaded — 5 CONTACT-tier leads ready';
+  } catch(e) { alert('Seed failed: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '⚡ Load Demo Data'; }
 }
 
 async function refreshSignals() {
@@ -448,7 +462,8 @@ async function loadCalls() {
 }
 
 // ── demo call ─────────────────────────────────────────────────────────────────
-let callFrame = null;
+let livekitRoom = null;
+let localAudioTrack = null;
 
 function setDemoStatus(msg, type) {
   const el = document.getElementById('d-status');
@@ -484,37 +499,57 @@ async function startCall() {
     session = await resp.json();
   } catch(e) { setDemoStatus('Server error: ' + e.message, 'error'); startBtn.disabled=false; return; }
 
-  if (session.error || !session.room_url) {
+  if (session.error || !session.livekit_url || !session.token) {
     setDemoStatus(session.error || 'Failed to create session.', 'error');
     startBtn.disabled=false; return;
   }
 
   setDemoStatus('Joining room — allow microphone access when prompted.', 'info');
-  callFrame = window.DailyIframe.createCallObject({audioSource:true, videoSource:false});
 
-  callFrame.on('joined-meeting', () => {
+  try {
+    livekitRoom = new LivekitClient.Room({
+      adaptiveStream: true,
+      dynacast: true,
+    });
+
+    livekitRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === LivekitClient.Track.Kind.Audio) {
+        document.body.appendChild(track.attach());
+      }
+    });
+    livekitRoom.on(LivekitClient.RoomEvent.Disconnected, () => {
+      setDemoStatus('Call ended.', 'info');
+      document.getElementById('call-panel').style.display='none';
+      endBtn.style.display='none';
+      startBtn.disabled=false;
+      localAudioTrack = null;
+      livekitRoom = null;
+    });
+    livekitRoom.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === 'transcript') appendTranscript(msg.speaker, msg.text);
+      } catch(e) {}
+    });
+
+    await livekitRoom.connect(session.livekit_url, session.token);
+    localAudioTrack = await LivekitClient.createLocalAudioTrack();
+    await livekitRoom.localParticipant.publishTrack(localAudioTrack);
+
     setDemoStatus('Connected — AI agent will speak first.', 'ok');
     document.getElementById('call-panel').style.display='block';
     endBtn.style.display='block';
-  });
-  callFrame.on('left-meeting', () => {
-    setDemoStatus('Call ended.', 'info');
-    document.getElementById('call-panel').style.display='none';
-    endBtn.style.display='none';
-    startBtn.disabled=false; callFrame=null;
-  });
-  callFrame.on('error', e => {
-    setDemoStatus('Call error: ' + (e.errorMsg||JSON.stringify(e)), 'error');
+  } catch(e) {
+    setDemoStatus('Call error: ' + e.message, 'error');
     startBtn.disabled=false;
-  });
-  callFrame.on('app-message', msg => {
-    if (msg.data?.type==='transcript') appendTranscript(msg.data.speaker, msg.data.text);
-  });
-
-  await callFrame.join({url: session.room_url});
+    if (livekitRoom) await livekitRoom.disconnect();
+  }
 }
 
-async function endCall() { if (callFrame) await callFrame.leave(); }
+async function endCall() {
+  if (localAudioTrack) localAudioTrack.stop();
+  if (livekitRoom) await livekitRoom.disconnect();
+}
 
 // ── init ───────────────────────────────────────────────────────────────────────
 loadLeads();

@@ -9,6 +9,7 @@ venv/
 .DS_Store
 *.log
 *.sqlite
+*.db
 audits/*.output
 node_modules/
 dist/

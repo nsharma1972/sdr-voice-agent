@@ -75,14 +75,14 @@ class DemoSessionRequest(BaseModel):
 async def start_demo(req: DemoSessionRequest) -> dict:
     missing = config.assert_voice_ready()
     if missing:
-        return {"error": f"Missing env vars: {missing}. Check .env.", "room_url": None}
+        return {"error": f"Missing env vars: {missing}. Check .env."}
 
     from src.voice.demo import start_demo_session
     prospect = {"id": "demo", "first_name": req.first_name, "company": req.company, "fit_score": 75}
     signal   = {"signal_type": req.signal_type,
                  "summary": req.signal_summary or f"Demo — signal type {req.signal_type}"}
     session = await start_demo_session(prospect, signal)
-    return {"room_url": session["room_url"], "room_name": session["room_name"]}
+    return session
 
 
 # ── signal ingestion + lead qualification ─────────────────────────────────────
@@ -150,6 +150,45 @@ async def manual_enqueue(company_name: str) -> dict:
     if not qid:
         return {"status": "already_queued", "company": company_name}
     return {"status": "queued", "queue_id": qid, "company": company_name}
+
+
+# ── demo seed data ───────────────────────────────────────────────────────────
+
+_DEMO_LEADS = [
+    {"company_name": "Rippling", "score": 78, "tier": "CONTACT", "signal_count": 2,
+     "signal_types": ["S4", "S5"], "primary_signal": "S4",
+     "summary": "Rippling raises $200M Series F to expand AI-powered HR automation platform",
+     "source_url": "", "score_breakdown": {"funding_decayed": 40, "hiring_decayed": 15, "multi_signal_bonus": 8, "urgency_bonus": 10, "cluster_bonus": 5}, "created_at": "2026-06-07T00:00:00+00:00"},
+    {"company_name": "Glean", "score": 72, "tier": "CONTACT", "signal_count": 2,
+     "signal_types": ["S4", "S6"], "primary_signal": "S4",
+     "summary": "Glean closes $260M Series D — CEO on AI governance risks in enterprise search",
+     "source_url": "", "score_breakdown": {"funding_decayed": 40, "exec_decayed": 15, "multi_signal_bonus": 8, "urgency_bonus": 10}, "created_at": "2026-06-07T00:00:00+00:00"},
+    {"company_name": "Synthesia", "score": 68, "tier": "CONTACT", "signal_count": 2,
+     "signal_types": ["S2", "S5"], "primary_signal": "S2",
+     "summary": "Synthesia 10-K discloses AI deepfake regulatory risk; hiring Head of AI Compliance",
+     "source_url": "", "score_breakdown": {"regulatory_decayed": 35, "hiring_decayed": 15, "multi_signal_bonus": 8, "cluster_bonus": 5}, "created_at": "2026-06-07T00:00:00+00:00"},
+    {"company_name": "Ironclad", "score": 65, "tier": "CONTACT", "signal_count": 2,
+     "signal_types": ["S7", "S5"], "primary_signal": "S7",
+     "summary": "Ironclad announces AI contract intelligence platform; posting VP of Data Governance",
+     "source_url": "", "score_breakdown": {"press_decayed": 30, "hiring_decayed": 15, "multi_signal_bonus": 8, "cluster_bonus": 5}, "created_at": "2026-06-07T00:00:00+00:00"},
+    {"company_name": "Mosaic ML", "score": 62, "tier": "CONTACT", "signal_count": 2,
+     "signal_types": ["S6", "S5"], "primary_signal": "S6",
+     "summary": "Mosaic ML CTO interview: 'AI governance is the biggest unsolved problem in enterprise AI'",
+     "source_url": "", "score_breakdown": {"exec_decayed": 30, "hiring_decayed": 15, "multi_signal_bonus": 8, "cluster_bonus": 5}, "created_at": "2026-06-07T00:00:00+00:00"},
+]
+
+
+@app.post("/demo/seed-leads")
+async def seed_demo_leads() -> dict:
+    """Inject realistic CONTACT-tier demo leads into the cache for testing."""
+    existing = _pipeline_cache.get("leads", [])
+    demo_names = {l["company_name"] for l in _DEMO_LEADS}
+    merged = [l for l in existing if l["company_name"] not in demo_names] + _DEMO_LEADS
+    merged.sort(key=lambda l: l["score"], reverse=True)
+    _pipeline_cache["leads"] = merged
+    from datetime import datetime, timezone
+    _pipeline_cache.setdefault("run_at", datetime.now(timezone.utc).isoformat())
+    return {"status": "ok", "seeded": len(_DEMO_LEADS), "total_leads": len(merged)}
 
 
 # ── calls ────────────────────────────────────────────────────────────────────

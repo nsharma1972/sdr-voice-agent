@@ -1,7 +1,7 @@
 # SDR Voice Agent
 
 Signal-triggered outbound voice AI for B2B sales development.  
-**Free stack:** Pipecat + Daily.co + Deepgram free tier + edge-tts + local Mistral via LiteLLM.
+**Free stack:** Pipecat + LiveKit Cloud + Deepgram free tier + local Mistral via LiteLLM.
 
 ## What it does
 
@@ -15,17 +15,17 @@ Signal-triggered outbound voice AI for B2B sales development.
 
 | Layer | Choice | Cost |
 |---|---|---|
-| Voice transport | Daily.co (WebRTC) | Free tier (10K min/mo) |
+| Voice transport | LiveKit Cloud (WebRTC) | Free tier, no credit card required |
 | STT | Deepgram Nova-3 | Free tier (12K min/yr) |
-| TTS | edge-tts (Microsoft Edge) | Free, no key needed |
+| TTS | Deepgram Aura | Uses Deepgram key |
 | LLM primary | Mistral Small 3 7B (local via Ollama/exo) | Free |
 | LLM fallback | GPT-4o mini (optional) | ~$0.0012/call |
 | Voice pipeline | Pipecat (open source) | Free |
 | Meeting booking | Cal.com | Free tier |
 | Database | SQLite (demo) / Postgres (prod) | Free |
 
-**Minimum API keys for demo:** `DAILY_API_KEY` + `DEEPGRAM_API_KEY`  
-Everything else runs locally or free.
+**Minimum API keys for demo:** `LIVEKIT_URL` + `LIVEKIT_API_KEY` + `LIVEKIT_API_SECRET` + `DEEPGRAM_API_KEY`
+Everything else runs locally or on free tiers.
 
 ## Quick start
 
@@ -38,7 +38,7 @@ pip install -e ".[dev]"
 
 # 2. Configure
 cp .env.example .env
-# Fill in DAILY_API_KEY and DEEPGRAM_API_KEY (both free)
+# Fill in LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and DEEPGRAM_API_KEY
 
 # 3. Start local LLM (Ollama example)
 ollama pull mistral
@@ -65,14 +65,14 @@ open http://localhost:8000
 ## Architecture
 
 ```
-Browser (Daily.co JS SDK)
+Browser (LiveKit JS SDK)
        ↕ WebRTC
-Daily.co cloud (free tier)
+LiveKit Cloud (free tier)
        ↕
 Pipecat pipeline (Python, your server)
    ├── Deepgram Nova-3 (STT)
    ├── LiteLLM → Mistral Small 3 7B local (LLM)
-   └── edge-tts (TTS, no key)
+   └── Deepgram Aura (TTS)
        ↓
    Cal.com (meeting booking tool)
 ```
@@ -83,7 +83,7 @@ Pipecat pipeline (Python, your server)
 src/
   voice/
     pipeline.py   Pipecat pipeline (STT → LLM → TTS)
-    demo.py       Daily.co room creation + bot session management
+    demo.py       LiveKit token creation + bot session management
     tools.py      Cal.com booking tool
     scheduler.py  APScheduler queue (Phase 2 — outbound calling)
     caller.py     Vapi outbound dispatch (Phase 2 — real phone calls)
@@ -102,7 +102,7 @@ docs/
 
 ## Phase 2 — real outbound calls (after hackathon)
 
-Swap Daily.co browser demo for Vapi outbound:
+After the browser demo, add Vapi outbound for real phone calls:
 - Add `VAPI_API_KEY` + `VAPI_PHONE_NUMBER_ID`
 - Use `src/voice/caller.py` to dispatch real phone calls
 - Use `src/voice/webhook.py` for Vapi event handling
