@@ -154,9 +154,10 @@ class SDRTurnPolicy(FrameProcessor):
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
-                    "http://localhost:11434/v1/chat/completions",
+                    "http://localhost:4000/v1/chat/completions",
+                    headers={"Authorization": "Bearer none"},
                     json={
-                        "model":       "mistral",
+                        "model":       "mistral-small-local",
                         "messages":    self._messages,
                         "max_tokens":  40,
                         "temperature": 0.3,
