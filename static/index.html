@@ -646,7 +646,12 @@ async function startCall() {
 
     livekitRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === LivekitClient.Track.Kind.Audio) {
-        document.body.appendChild(track.attach());
+        const audioEl = track.attach();
+        audioEl.autoplay = true;
+        audioEl.style.display = 'none';
+        document.body.appendChild(audioEl);
+        audioEl.play().catch(() => setDemoStatus('Agent audio connected — tap the page if Safari blocks playback.', 'info'));
+        setDemoStatus('Agent audio connected — listening after each question.', 'ok');
       }
     });
     livekitRoom.on(LivekitClient.RoomEvent.Disconnected, () => {
@@ -668,7 +673,7 @@ async function startCall() {
     await livekitRoom.connect(session.livekit_url, session.token);
     await livekitRoom.localParticipant.publishTrack(localAudioTrack);
 
-    setDemoStatus('Connected — AI agent will speak first.', 'ok');
+    setDemoStatus('Connected — agent is preparing to speak.', 'ok');
     document.getElementById('call-panel').style.display='block';
     document.getElementById('transcript').innerHTML = '<span class="meta">Transcript will appear here…</span>';
     endBtn.style.display='block';

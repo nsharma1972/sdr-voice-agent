@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 import certifi
+from deepgram import LiveOptions
 
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
@@ -52,18 +53,19 @@ class SDRTurnPolicy(FrameProcessor):
         self._turn = 0
         self._pending_interim_text = ""
         self._pending_interim_task: asyncio.Task | None = None
+        self._ignore_until = 0.0
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
             self._cancel_pending_interim()
-            if text:
+            if text and self._accept_user_text():
                 await self._send_reply(text)
             return
         if isinstance(frame, InterimTranscriptionFrame):
             text = frame.text.strip()
-            if text:
+            if text and self._accept_user_text():
                 self._pending_interim_text = text
                 self._cancel_pending_interim()
                 self._pending_interim_task = asyncio.create_task(self._reply_after_interim_pause(text))
@@ -77,7 +79,7 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _reply_after_interim_pause(self, text: str) -> None:
         try:
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.6)
             if text == self._pending_interim_text:
                 self._pending_interim_text = ""
                 await self._send_reply(text)
@@ -86,8 +88,12 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _send_reply(self, user_text: str) -> None:
         reply = self._reply(user_text)
+        self._ignore_until = asyncio.get_running_loop().time() + 3.5
         logger.info("sdr reply: %s", reply)
         await self.push_frame(TextFrame(reply))
+
+    def _accept_user_text(self) -> bool:
+        return asyncio.get_running_loop().time() >= self._ignore_until
 
     def _reply(self, user_text: str) -> str:
         text = user_text.lower()
@@ -114,20 +120,18 @@ class SDRTurnPolicy(FrameProcessor):
             self._turn = 1
             if positive:
                 return (
-                    "Thanks. The quick reason I called is that this kind of company activity often creates pressure "
-                    "around AI governance and data controls. Is that something your team is actively working on?"
+                    "Thanks. I work with teams when company activity creates AI governance pressure. "
+                    "Is that active for your team right now?"
                 )
             return (
-                "Got it. The quick question is whether AI governance or data controls are becoming active priorities "
-                "for your team right now."
+                "Got it. Is AI governance or data control work active for your team right now?"
             )
 
         if self._turn == 1:
             self._turn = 2
             if positive:
                 return (
-                    f"That makes sense. Would a short call with {sender_name} be worth it, "
-                    "just to compare notes on how similar companies are handling this?"
+                    f"That makes sense. Would a short call with {sender_name} be worth it to compare notes?"
                 )
             return "Understood. Is there someone else on your team who owns AI governance or data controls?"
 
@@ -213,19 +217,19 @@ def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str
 
 def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
     signal_type = signal.get("signal_type", SignalType.OTHER.value)
-    opener = SIGNAL_OPENERS.get(signal_type, SIGNAL_OPENERS[SignalType.OTHER.value])
-
+    signal_label = signal_type.replace("_", " ").lower()
     summary = signal.get("summary", "")
-    if summary and len(summary) > 20:
-        opener = f"{opener} Specifically, {summary[:120].rstrip('.')}."
+    context = f"I noticed {summary[:90].rstrip('.')}." if summary and len(summary) > 20 else (
+        f"I noticed a recent {signal_label} signal at your company."
+    )
 
     return (
         "Hi {first_name}, I'm an AI assistant following up on behalf of {sender_name}. "
-        "{opener} Do you have 90 seconds?"
+        "{context} Do you have 90 seconds?"
     ).format(
         first_name=prospect.get("first_name", "there"),
         sender_name=config.SENDER_NAME or "our team",
-        opener=opener,
+        context=context,
     )
 
 
@@ -252,7 +256,14 @@ async def run_sdr_pipeline(
         ),
     )
 
-    stt = DeepgramSTTService(api_key=config.DEEPGRAM_API_KEY)
+    stt = DeepgramSTTService(
+        api_key=config.DEEPGRAM_API_KEY,
+        live_options=LiveOptions(
+            endpointing=300,
+            utterance_end_ms="1000",
+            no_delay=True,
+        ),
+    )
 
     tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-helios-en")
 
