@@ -360,7 +360,9 @@ async def run_sdr_pipeline(
     stt = DeepgramSTTService(
         api_key=config.DEEPGRAM_API_KEY,
         live_options=LiveOptions(
-            model="nova-3",
+            model="nova-2",         # nova-3 may not be enabled on all accounts → HTTP 400; nova-2 is universally available
+            language="en-US",
+            interim_results=True,   # REQUIRED by Deepgram when utterance_end_ms is set (else HTTP 400)
             endpointing=150,
             utterance_end_ms="600",
             no_delay=True,
