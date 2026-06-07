@@ -15,7 +15,14 @@ os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import TextFrame, TranscriptionFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    InterimTranscriptionFrame,
+    TextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -41,10 +48,11 @@ STRICT RULES — follow every one or the call fails:
 5. Ask only ONE question per turn.
 6. Goal sequence: confirm interest → ask for a 15-min meeting → get their email → close.
 7. If they agree to meet: ask "What email should I send the invite to?"
-8. If they give an email address: respond ONLY with "Perfect, I will get that sent over."
+8. If they give an email address (contains @ symbol): respond ONLY with "Perfect, I will get that sent over."
 9. If they decline or say not interested: respond ONLY with "Understood, thanks for your time."
 10. Never pitch features, pricing, or competitors.
 11. Never repeat yourself.
+12. Do NOT say "Perfect, I will get that sent over" unless they literally gave you an email address with an @ symbol.
 
 Signal context: {signal_summary}
 You are calling on behalf of: {sender_name}
@@ -65,14 +73,10 @@ _SIGNAL_OPENERS = {
 def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
     company  = prospect.get("company") or "your company"
     sig_type = signal.get("signal_type", "")
-    context  = _SIGNAL_OPENERS.get(sig_type, "calling about recent activity at {company}").format(company=company)
-    return (
-        "Hi {first_name}, I'm an AI assistant for {sender_name} — {context}. "
-        "Do you have 60 seconds?"
-    ).format(
-        first_name  = prospect.get("first_name", "there"),
-        sender_name = config.SENDER_NAME or "our team",
-        context     = context,
+    context  = _SIGNAL_OPENERS.get(sig_type, "recent activity at {company}").format(company=company)
+    return "Hi {first_name}, {context} — got 60 seconds?".format(
+        first_name = prospect.get("first_name", "there"),
+        context    = context,
     )
 
 
@@ -90,8 +94,9 @@ class SDRTurnPolicy(FrameProcessor):
         super().__init__()
         self._call_id  = call_id
         self._outcome  = "needs_review"
-        self._responding = False
+        self._bot_speaking = False   # true while TTS audio is playing
         self._ignore_until = 0.0
+        self._turn_lock = asyncio.Lock()   # prevents concurrent LLM calls
         self._transcript: list[tuple[str, str]] = [("agent", opener)]
 
         system = _SYSTEM_PROMPT.format(
@@ -107,11 +112,46 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+
+        # Subclasses of TextFrame must be checked BEFORE the generic TextFrame guard below.
+
+        # Drop interim STT — partial words, not complete utterances
+        if isinstance(frame, InterimTranscriptionFrame):
+            return
+
+        # Final STT — drive the LLM turn
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
-            if text and not self._responding and self._ready():
-                await self._handle_turn(text)
+            if text and not self._bot_speaking and not self._turn_lock.locked() and self._ready():
+                task = asyncio.get_event_loop().create_task(self._handle_turn(text))
+                task.add_done_callback(
+                    lambda t: logger.error("_handle_turn raised: %s", t.exception())
+                    if not t.cancelled() and t.exception() else None
+                )
+            else:
+                logger.debug("STT dropped (bot_speaking=%s locked=%s): %s",
+                             self._bot_speaking, self._turn_lock.locked(), text[:60])
             return
+
+        # Bot finished speaking — open the mic (with brief cooldown)
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._ignore_until = asyncio.get_running_loop().time() + 0.4
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # Outbound speech frames — block STT before TTS even starts playing.
+        # Must come AFTER the TranscriptionFrame/InterimTranscriptionFrame checks
+        # above since those are TextFrame subclasses and would match here first.
+        if isinstance(frame, (TTSSpeakFrame, TextFrame)) and direction == FrameDirection.DOWNSTREAM:
+            self._bot_speaking = True
+            await self.push_frame(frame, direction)
+            return
+
         await self.push_frame(frame, direction)
 
     def _ready(self) -> bool:
@@ -120,24 +160,23 @@ class SDRTurnPolicy(FrameProcessor):
     # ── LLM call ──────────────────────────────────────────────────────────────
 
     async def _handle_turn(self, user_text: str) -> None:
-        self._responding  = True
-        self._ignore_until = asyncio.get_running_loop().time() + 0.4
-        self._transcript.append(("prospect", user_text))
-
-        try:
-            # Email detection first — no LLM needed
-            reply = self._check_email(user_text)
-            if reply is None:
-                reply = await self._call_llm(user_text)
-                self._detect_outcome(reply)
-            self._transcript.append(("agent", reply))
-            logger.info("SDR → %s", reply)
-            await self.push_frame(TextFrame(reply))
-        except Exception as exc:
-            logger.warning("turn handler error: %s", exc)
-            await self.push_frame(TextFrame("Sorry — could you say that again?"))
-        finally:
-            self._responding = False
+        if self._turn_lock.locked():
+            return
+        async with self._turn_lock:
+            self._ignore_until = asyncio.get_running_loop().time() + 0.4
+            self._transcript.append(("prospect", user_text))
+            logger.info("USER → %s", user_text)
+            try:
+                reply = self._check_email(user_text)
+                if reply is None:
+                    reply = await self._call_llm(user_text)
+                    self._detect_outcome(reply)
+                self._transcript.append(("agent", reply))
+                logger.info("SDR → %s", reply)
+                await self.push_frame(TextFrame(reply))
+            except Exception as exc:
+                logger.warning("turn handler error: %s", exc)
+                await self.push_frame(TextFrame("Sorry — could you say that again?"))
 
     def _check_email(self, user_text: str) -> str | None:
         """Return a closing line if user gave an email, else None."""
@@ -146,33 +185,64 @@ class SDRTurnPolicy(FrameProcessor):
         normalised = re.sub(r"\s+dot\s+", ".", normalised, flags=re.IGNORECASE)
         if re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", normalised):
             self._outcome = "booked"
-            return "Perfect, I will get that invite sent over."
+            return "Perfect, I will get that sent over."
         return None
+
+    def _trimmed_messages(self) -> list[dict]:
+        """System prompt + last 4 exchanges — keeps context small and latency flat."""
+        system = self._messages[:2]   # system + opener
+        recent = self._messages[2:]
+        if len(recent) > 8:           # 4 user + 4 assistant
+            recent = recent[-8:]
+        return system + recent
 
     async def _call_llm(self, user_text: str) -> str:
         self._messages.append({"role": "user", "content": user_text})
+        if config.GROQ_API_KEY:
+            url     = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
+            model   = "llama-3.1-8b-instant"
+        else:
+            url     = f"{config.LITELLM_BASE_URL}/chat/completions"
+            headers = {"Authorization": f"Bearer {config.LITELLM_API_KEY}"}
+            model   = config.LLM_MODEL
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
-                    "http://localhost:4000/v1/chat/completions",
-                    headers={"Authorization": "Bearer none"},
+                    url,
+                    headers=headers,
                     json={
-                        "model":       "mistral-small-local",
-                        "messages":    self._messages,
-                        "max_tokens":  40,
+                        "model":       model,
+                        "messages":    self._trimmed_messages(),
+                        "max_tokens":  25,
                         "temperature": 0.3,
                         "stream":      False,
                     },
                 )
             resp.raise_for_status()
             reply = resp.json()["choices"][0]["message"]["content"].strip()
-            # Strip markdown, bullet points, multi-sentence overflow
             reply = re.sub(r"[*_`#]", "", reply)
-            reply = reply.split(".")[0].strip() + ("." if not reply.endswith("?") else "")
-            reply = reply[:120]  # hard cap
+            # Strip leading filler acknowledgments (LLM loves starting with "Yes, ...")
+            reply = re.sub(
+                r"^(Yes|Sure|Right|Okay|OK|Got it|Alright|Absolutely|Great|Understood|"
+                r"Of course|Certainly|Indeed|Sounds good)[,!.]?\s*",
+                "", reply, flags=re.IGNORECASE,
+            ).strip()
+            # Prefer a question; fallback to first sentence
+            sentences = [s.strip() for s in re.split(r"(?<=[.?!])\s+", reply) if s.strip()]
+            question = next((s for s in sentences if s.endswith("?")), None)
+            reply = question or (sentences[0] if sentences else None)
+            if not reply:
+                reply = "Could we set up a quick call to discuss this?"
+            if reply[-1] not in ".?!":
+                reply += "."
+            reply = reply[:120]
         except Exception as exc:
             logger.warning("LLM error: %s", exc)
+            self._messages.pop()   # don't poison history with an unanswered turn
             reply = "Could you say that again?"
+            self._messages.append({"role": "assistant", "content": reply})
+            return reply
         self._messages.append({"role": "assistant", "content": reply})
         return reply
 
@@ -230,11 +300,9 @@ async def run_sdr_pipeline(
     stt = DeepgramSTTService(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
-            model            = "nova-3",
-            endpointing      = 150,
-            utterance_end_ms = "600",
-            no_delay         = True,
-            smart_format     = False,
+            model        = "nova-2",
+            endpointing  = 100,
+            smart_format = False,
         ),
     )
 
@@ -264,8 +332,6 @@ async def run_sdr_pipeline(
             return
         opener_fired = True
         await asyncio.sleep(0.5)
-        # Block STT for opener duration (~1.5s for a 16-word opener at TTS pace)
-        sdr_policy._ignore_until = asyncio.get_running_loop().time() + 1.5
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")
