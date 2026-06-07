@@ -603,7 +603,15 @@ async function startCall() {
   const startBtn = document.getElementById('start-btn');
   const endBtn   = document.getElementById('end-btn');
   startBtn.disabled = true;
-  setDemoStatus('Creating session…', 'info');
+  setDemoStatus('Requesting microphone access…', 'info');
+
+  try {
+    localAudioTrack = await LivekitClient.createLocalAudioTrack();
+  } catch(e) {
+    setDemoStatus('Microphone error: ' + e.message, 'error');
+    startBtn.disabled=false;
+    return;
+  }
 
   const body = {
     first_name:     document.getElementById('d-first').value || 'Alex',
@@ -613,6 +621,7 @@ async function startCall() {
   };
 
   let session;
+  setDemoStatus('Creating session…', 'info');
   try {
     const resp = await fetch('/demo/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     session = await resp.json();
@@ -620,7 +629,10 @@ async function startCall() {
 
   if (session.error || !session.livekit_url || !session.token) {
     setDemoStatus(session.error || 'Failed to create session.', 'error');
-    startBtn.disabled=false; return;
+    startBtn.disabled=false;
+    if (localAudioTrack) localAudioTrack.stop();
+    localAudioTrack = null;
+    return;
   }
   currentCallId = session.call_id || null;
 
@@ -654,7 +666,6 @@ async function startCall() {
     });
 
     await livekitRoom.connect(session.livekit_url, session.token);
-    localAudioTrack = await LivekitClient.createLocalAudioTrack();
     await livekitRoom.localParticipant.publishTrack(localAudioTrack);
 
     setDemoStatus('Connected — AI agent will speak first.', 'ok');

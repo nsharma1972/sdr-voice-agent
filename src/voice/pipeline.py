@@ -244,12 +244,13 @@ async def run_sdr_pipeline(
     task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
     opener_started = False
 
-    @transport.event_handler("on_audio_track_subscribed")
-    async def on_audio_track_subscribed(transport, participant_id):
+    @transport.event_handler("on_first_participant_joined")
+    async def on_joined(transport, participant_id):
         nonlocal opener_started
         if opener_started:
             return
         opener_started = True
+        await asyncio.sleep(1.0)
         opening_line = build_opening_line(prospect, signal)
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
