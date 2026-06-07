@@ -655,13 +655,14 @@ async function startCall() {
       }
     });
     livekitRoom.on(LivekitClient.RoomEvent.Disconnected, () => {
-      setDemoStatus('Call ended.', 'info');
+      setDemoStatus('Call ended — switching to Calls tab.', 'info');
       document.getElementById('call-panel').style.display='none';
       endBtn.style.display='none';
       startBtn.disabled=false;
       localAudioTrack = null;
       livekitRoom = null;
-      if (_currentTab === 'calls') loadCalls();
+      // Wait briefly for server flush_transcript, then show result
+      setTimeout(() => { switchTab('calls'); loadCalls(); }, 1500);
     });
     livekitRoom.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
       try {
@@ -685,15 +686,9 @@ async function startCall() {
 }
 
 async function endCall() {
-  if (currentCallId) {
-    await fetch(`/calls/${encodeURIComponent(currentCallId)}/review`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({outcome: 'needs_review', reviewed: false}),
-    }).catch(() => {});
-  }
   if (localAudioTrack) localAudioTrack.stop();
   if (livekitRoom) await livekitRoom.disconnect();
+  // Let server-side flush_transcript set the real outcome — don't overwrite here
   currentCallId = null;
 }
 

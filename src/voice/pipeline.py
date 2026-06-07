@@ -375,9 +375,11 @@ async def run_sdr_pipeline(
     stt = DeepgramSTTService(
         api_key=config.DEEPGRAM_API_KEY,
         live_options=LiveOptions(
-            endpointing=300,
-            utterance_end_ms="1000",
+            model="nova-3",
+            endpointing=150,
+            utterance_end_ms="600",
             no_delay=True,
+            smart_format=False,
         ),
     )
 
@@ -406,6 +408,12 @@ async def run_sdr_pipeline(
         opener_started = True
         await asyncio.sleep(0.5)
         opening_line = build_opening_line(prospect, signal)
+        # Block STT responses during opener TTS to prevent echo feedback loop
+        opener_words = len(opening_line.split())
+        sdr_policy._ignore_until = (
+            asyncio.get_running_loop().time() + (opener_words * 0.1) + 2.0
+        )
+        sdr_policy._transcript.append(("agent", opening_line))
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")

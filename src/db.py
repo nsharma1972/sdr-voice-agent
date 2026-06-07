@@ -225,20 +225,23 @@ async def update_call_review(
     transcript_text: str | None = None,
 ) -> bool:
     async with get_db() as db:
+        # outcome and transcript_text use direct SET (caller wins, no COALESCE)
+        # so flush_transcript always overwrites the JS-set placeholder
         cursor = await db.execute(
             """UPDATE calls
-               SET outcome=COALESCE(?, outcome),
+               SET outcome=CASE WHEN ? IS NOT NULL THEN ? ELSE outcome END,
                    reviewed=COALESCE(?, reviewed),
                    notes=COALESCE(?, notes),
-                   booked_meeting=COALESCE(?, booked_meeting),
-                   transcript_text=COALESCE(?, transcript_text)
+                   booked_meeting=CASE WHEN ? IS NOT NULL THEN ? ELSE booked_meeting END,
+                   transcript_text=CASE WHEN ? IS NOT NULL THEN ? ELSE transcript_text END
                WHERE id=?""",
             (
-                outcome,
+                outcome, outcome,
                 None if reviewed is None else int(reviewed),
                 notes,
                 None if booked_meeting is None else int(booked_meeting),
-                transcript_text,
+                None if booked_meeting is None else int(booked_meeting),
+                transcript_text, transcript_text,
                 call_id,
             ),
         )
