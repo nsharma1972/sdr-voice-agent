@@ -56,6 +56,7 @@ class SDRTurnPolicy(FrameProcessor):
         self._pending_interim_task: asyncio.Task | None = None
         self._ignore_until = 0.0
         self._transcript: list[tuple[str, str]] = []  # (speaker, text)
+        self._outcome = "needs_review"
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -100,13 +101,20 @@ class SDRTurnPolicy(FrameProcessor):
         await self.push_frame(TextFrame(reply))
 
     async def flush_transcript(self) -> None:
-        """Persist collected transcript to the calls DB record."""
-        if not self._call_id or not self._transcript:
+        """Persist transcript and auto-detected outcome to the calls DB record."""
+        if not self._call_id:
             return
-        text = "\n".join(f"{spk.upper()}: {line}" for spk, line in self._transcript)
+        text = "\n".join(f"{spk.upper()}: {line}" for spk, line in self._transcript) or None
         try:
             from src.db import update_call_review
-            await update_call_review(self._call_id, notes=text)
+            booked = self._outcome == "booked"
+            await update_call_review(
+                self._call_id,
+                outcome=self._outcome,
+                booked_meeting=booked,
+                transcript_text=text,
+            )
+            logger.info("call %s flushed: outcome=%s turns=%d", self._call_id, self._outcome, len(self._transcript))
         except Exception as exc:
             logger.warning("transcript flush failed: %s", exc)
 
@@ -155,6 +163,7 @@ class SDRTurnPolicy(FrameProcessor):
 
         if any(phrase in text for phrase in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
+            self._outcome = "not_interested"
             return "Understood, I won't take more of your time — thanks for speaking with me."
 
         if any(word in text for word in ("busy", "bad time", "call me later", "not now")):
@@ -166,6 +175,7 @@ class SDRTurnPolicy(FrameProcessor):
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
         if email:
             self._turn = 99
+            self._outcome = "booked"
             return "Perfect, I'll get that invite sent over — is there anything specific you would want covered on the call?"
 
         positive = self._is_positive(text)
@@ -189,13 +199,17 @@ class SDRTurnPolicy(FrameProcessor):
         if self._turn == 1:
             self._turn = 2
             if positive or self._is_booking_intent(text):
+                self._outcome = "interested"
                 return f"Good to hear. What email should I use for a calendar invite with {sender_name}?"
+            self._outcome = "not_interested"
             return "Understood — who on your team owns AI governance or data quality?"
 
         if self._turn == 2:
             self._turn = 3
             if positive or self._is_booking_intent(text):
+                self._outcome = "interested"
                 return f"Perfect, what email should I send the invite to?"
+            self._outcome = "not_interested"
             return "Got it, I will note that and close out here — thanks for a few minutes."
 
         return "Thanks for that. Should I send a short note, or go ahead and send the calendar invite?"

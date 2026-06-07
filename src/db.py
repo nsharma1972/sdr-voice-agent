@@ -222,6 +222,7 @@ async def update_call_review(
     reviewed: bool | None = None,
     notes: str | None = None,
     booked_meeting: bool | None = None,
+    transcript_text: str | None = None,
 ) -> bool:
     async with get_db() as db:
         cursor = await db.execute(
@@ -229,13 +230,15 @@ async def update_call_review(
                SET outcome=COALESCE(?, outcome),
                    reviewed=COALESCE(?, reviewed),
                    notes=COALESCE(?, notes),
-                   booked_meeting=COALESCE(?, booked_meeting)
+                   booked_meeting=COALESCE(?, booked_meeting),
+                   transcript_text=COALESCE(?, transcript_text)
                WHERE id=?""",
             (
                 outcome,
                 None if reviewed is None else int(reviewed),
                 notes,
                 None if booked_meeting is None else int(booked_meeting),
+                transcript_text,
                 call_id,
             ),
         )
