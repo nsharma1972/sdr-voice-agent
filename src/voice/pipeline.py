@@ -116,25 +116,9 @@ class SDRTurnPolicy(FrameProcessor):
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        # Outbound speech — set flag early so STT is blocked before TTS even starts
-        if isinstance(frame, (TTSSpeakFrame, TextFrame)) and direction == FrameDirection.DOWNSTREAM:
-            self._bot_speaking = True
-            await self.push_frame(frame, direction)
-            return
+        # Subclasses of TextFrame must be checked BEFORE the generic TextFrame guard below.
 
-        # Bot finished speaking — open the mic again (with brief cooldown)
-        if isinstance(frame, BotStoppedSpeakingFrame):
-            self._bot_speaking = False
-            self._ignore_until = asyncio.get_running_loop().time() + 0.4
-            await self.push_frame(frame, direction)
-            return
-
-        # Drop upstream speaking frame — no longer needed, we track via outbound frames
-        if isinstance(frame, BotStartedSpeakingFrame):
-            await self.push_frame(frame, direction)
-            return
-
-        # Drop interim STT — these are partial words, not complete utterances
+        # Drop interim STT — partial words, not complete utterances
         if isinstance(frame, InterimTranscriptionFrame):
             return
 
@@ -150,6 +134,25 @@ class SDRTurnPolicy(FrameProcessor):
             else:
                 logger.debug("STT dropped (bot_speaking=%s locked=%s): %s",
                              self._bot_speaking, self._turn_lock.locked(), text[:60])
+            return
+
+        # Bot finished speaking — open the mic (with brief cooldown)
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._ignore_until = asyncio.get_running_loop().time() + 0.4
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # Outbound speech frames — block STT before TTS even starts playing.
+        # Must come AFTER the TranscriptionFrame/InterimTranscriptionFrame checks
+        # above since those are TextFrame subclasses and would match here first.
+        if isinstance(frame, (TTSSpeakFrame, TextFrame)) and direction == FrameDirection.DOWNSTREAM:
+            self._bot_speaking = True
+            await self.push_frame(frame, direction)
             return
 
         await self.push_frame(frame, direction)
