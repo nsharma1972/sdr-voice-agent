@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from src import config
-from src.voice.scheduler import start_scheduler, stop_scheduler
-from src.voice.webhook import handle_vapi_webhook
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,42 +31,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-async def startup() -> None:
-    missing = config.assert_voice_ready()
-    if missing:
-        logger.warning("Voice not ready — missing env vars: %s", missing)
-    else:
-        start_scheduler()
-        logger.info("SDR Voice Agent started")
+STATIC_DIR = Path(__file__).parent.parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    stop_scheduler()
-
-
-@app.post("/webhooks/vapi")
-async def vapi_webhook(request):
-    from fastapi import Header, Request
-    from src.voice.webhook import handle_vapi_webhook
-    return await handle_vapi_webhook(request)
-
+# ── health ──────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": "0.1.0"}
 
 
+# ── demo UI ─────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    html_file = STATIC_DIR / "index.html"
+    if html_file.exists():
+        return FileResponse(str(html_file))
+    return HTMLResponse("<h1>SDR Voice Agent</h1><p>static/index.html not found</p>")
+
+
+# ── demo session API ─────────────────────────────────────────────────────────
+
+class DemoSessionRequest(BaseModel):
+    first_name: str = "Alex"
+    last_name: str = ""
+    company: str = ""
+    signal_type: str = "S1"
+    signal_summary: str = ""
+
+
+@app.post("/demo/start")
+async def start_demo(req: DemoSessionRequest) -> dict:
+    """
+    Create a Daily.co room, launch the Pipecat bot, return the room URL.
+    The browser joins the same room via Daily.co JS SDK.
+    """
+    missing = config.assert_voice_ready()
+    if missing:
+        return {
+            "error": f"Missing env vars: {missing}. Check .env and README.",
+            "room_url": None,
+        }
+
+    from src.voice.demo import start_demo_session
+
+    prospect = {
+        "id": "demo",
+        "first_name": req.first_name,
+        "last_name": req.last_name,
+        "company": req.company,
+        "fit_score": 75,
+    }
+    signal = {
+        "signal_type": req.signal_type,
+        "summary": req.signal_summary or f"Demo signal — type {req.signal_type}",
+    }
+
+    session = await start_demo_session(prospect, signal)
+    return {"room_url": session["room_url"], "room_name": session["room_name"]}
+
+
+# ── calls portal ─────────────────────────────────────────────────────────────
+
 @app.get("/calls")
 async def list_calls(limit: int = 50, offset: int = 0) -> dict:
-    """Portal: recent calls with outcomes. TODO: query DB."""
     return {"calls": [], "total": 0, "limit": limit, "offset": offset}
-
-
-@app.post("/calls/enqueue")
-async def enqueue_call(prospect_id: str, signal_id: str, priority: int = 50) -> dict:
-    """Manually enqueue a call for a given prospect + signal."""
-    # TODO: insert into call_queue table
-    return {"status": "queued", "prospect_id": prospect_id, "signal_id": signal_id}

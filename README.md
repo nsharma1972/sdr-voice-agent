@@ -1,71 +1,80 @@
 # SDR Voice Agent
 
-Signal-triggered outbound voice AI for B2B sales development. Built on Vapi + LiteLLM.
+Signal-triggered outbound voice AI for B2B sales development.  
+**Free stack:** Pipecat + Daily.co + Deepgram free tier + edge-tts + local Mistral via LiteLLM.
 
 ## What it does
 
 1. A regulatory/market signal fires (FDA warning letter, 510(k) clearance, 10-K AI risk disclosure, etc.)
-2. Email goes out → no reply in 5 days → voice follow-up call dispatched
-3. Vapi places the call; AI agent identifies itself as an AI, references the specific regulatory trigger, offers a discovery call
-4. If prospect answers: books a meeting via Cal.com tool call mid-conversation
-5. If no answer: leaves an 18–25 second signal-specific voicemail (raises email reply rate ~115%)
-6. All outcomes logged to Postgres → reviewed in a portal
+2. Email goes out → no reply in 5 days → voice follow-up session dispatched
+3. AI agent identifies itself as an AI, references the specific regulatory trigger, offers a discovery call
+4. Prospect can book a meeting via Cal.com mid-conversation
+5. All outcomes logged to database → reviewed in portal
 
-## Architecture
+## Free stack
 
-```
-Signal (openFDA/SEC/ClinTrials) → Score → Email → [5 days, no reply] → Voice
-                                                                          ↓
-                                                     Vapi (STT: Deepgram Nova-3)
-                                                          ↓
-                                               LiteLLM Router (local cluster)
-                                              /                          \
-                                   Mistral Small 3 7B              GPT-4o mini
-                                   (local, ~80ms)                  (cloud fallback)
-                                              \                          /
-                                           ElevenLabs Flash v2.5 (TTS)
-                                                          ↓
-                                             Cal.com booking tool
-                                                          ↓
-                                              Postgres → Portal review
-```
+| Layer | Choice | Cost |
+|---|---|---|
+| Voice transport | Daily.co (WebRTC) | Free tier (10K min/mo) |
+| STT | Deepgram Nova-3 | Free tier (12K min/yr) |
+| TTS | edge-tts (Microsoft Edge) | Free, no key needed |
+| LLM primary | Mistral Small 3 7B (local via Ollama/exo) | Free |
+| LLM fallback | GPT-4o mini (optional) | ~$0.0012/call |
+| Voice pipeline | Pipecat (open source) | Free |
+| Meeting booking | Cal.com | Free tier |
+| Database | SQLite (demo) / Postgres (prod) | Free |
 
-## Stack
-
-| Layer | Choice |
-|---|---|
-| Voice infra | Vapi |
-| STT | Deepgram Nova-3 |
-| TTS | ElevenLabs Flash v2.5 |
-| LLM primary | Mistral Small 3 7B (local, Apache 2.0) |
-| LLM fallback | GPT-4o mini |
-| LLM router | LiteLLM (latency-based routing) |
-| Meeting booking | Cal.com |
-| Backend | Python / FastAPI |
-| Database | Postgres |
-
-## ICP (default configuration)
-
-Biotech / Pharma / Medical Device companies:
-- 300–3,000 employees, US-HQ, active FDA exposure
-- Buyer personas: Head of Quality, Head of ClinOps, VP IT
-- Fit score ≥ 60 required before any outreach
-
-## Compliance (TCPA / FCC)
-
-- AI disclosure within first 5 seconds (FCC 2024 ruling)
-- Business landlines only in Phase 1 (TCPA mobile consent requirement)
-- DNC registry scrub before first call, every 31 days
-- Real-time opt-out suppression (< 10 seconds)
-- 8am–9pm prospect local time enforcement
+**Minimum API keys for demo:** `DAILY_API_KEY` + `DEEPGRAM_API_KEY`  
+Everything else runs locally or free.
 
 ## Quick start
 
 ```bash
-cp .env.example .env
-# fill in VAPI_API_KEY, LITELLM_BASE_URL, CALCOM_API_KEY, DATABASE_URL
+git clone https://github.com/nsharma1972/sdr-voice-agent
+cd sdr-voice-agent
+
+# 1. Install dependencies
 pip install -e ".[dev]"
-python -m src.main
+
+# 2. Configure
+cp .env.example .env
+# Fill in DAILY_API_KEY and DEEPGRAM_API_KEY (both free)
+
+# 3. Start local LLM (Ollama example)
+ollama pull mistral
+ollama serve
+# Then start LiteLLM router:
+litellm --config litellm.config.yaml
+
+# 4. Start the app
+uvicorn src.main:app --reload --port 8000
+
+# 5. Open browser
+open http://localhost:8000
+```
+
+## Demo flow
+
+1. Open `http://localhost:8000`
+2. Enter prospect name, company, pick a regulatory signal type
+3. Click **Start Demo Call**
+4. Allow microphone access
+5. The AI agent speaks first, you respond — full bidirectional voice conversation
+6. If you say you want to meet, the agent calls Cal.com and books a slot
+
+## Architecture
+
+```
+Browser (Daily.co JS SDK)
+       ↕ WebRTC
+Daily.co cloud (free tier)
+       ↕
+Pipecat pipeline (Python, your server)
+   ├── Deepgram Nova-3 (STT)
+   ├── LiteLLM → Mistral Small 3 7B local (LLM)
+   └── edge-tts (TTS, no key)
+       ↓
+   Cal.com (meeting booking tool)
 ```
 
 ## Project structure
@@ -73,20 +82,32 @@ python -m src.main
 ```
 src/
   voice/
-    assistant.py   # Vapi assistant config builder
-    webhook.py     # FastAPI webhook handlers (assistant-request, function-call, end-of-call)
-    caller.py      # outbound call dispatcher
-    scheduler.py   # APScheduler call queue (60s tick)
-    tools.py       # Cal.com booking tool implementation
-  config.py        # env-var config
-  models.py        # SQLAlchemy / Pydantic models
-  main.py          # FastAPI app entry point
+    pipeline.py   Pipecat pipeline (STT → LLM → TTS)
+    demo.py       Daily.co room creation + bot session management
+    tools.py      Cal.com booking tool
+    scheduler.py  APScheduler queue (Phase 2 — outbound calling)
+    caller.py     Vapi outbound dispatch (Phase 2 — real phone calls)
+    assistant.py  Vapi assistant config (Phase 2)
+    webhook.py    Vapi webhooks (Phase 2)
+  config.py       env-var config
+  main.py         FastAPI app
+static/
+  index.html      browser demo UI
 migrations/
-  007_voice.sql    # call_queue + calls tables
+  007_voice.sql   call_queue + calls tables
+litellm.config.yaml   LiteLLM router config
 docs/
-  BLUEPRINT.md     # full solution design (34 ADRs)
+  BLUEPRINT.md    full solution design (34 ADRs)
 ```
+
+## Phase 2 — real outbound calls (after hackathon)
+
+Swap Daily.co browser demo for Vapi outbound:
+- Add `VAPI_API_KEY` + `VAPI_PHONE_NUMBER_ID`
+- Use `src/voice/caller.py` to dispatch real phone calls
+- Use `src/voice/webhook.py` for Vapi event handling
+- Deploy migration `007_voice.sql` for persistent call queue
 
 ## License
 
-Apache 2.0
+Apache 2.0 — use freely, fork freely.

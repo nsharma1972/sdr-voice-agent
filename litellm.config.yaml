@@ -1,0 +1,20 @@
+model_list:
+  - model_name: mistral-small-local
+    litellm_params:
+      model: openai/mistral-small-3
+      api_base: http://localhost:8080/v1   # change to your Ollama/exo endpoint
+      api_key: none
+      timeout: 4.0
+
+  # Uncomment to enable cloud fallback when local times out
+  # - model_name: gpt-4o-mini
+  #   litellm_params:
+  #     model: gpt-4o-mini
+  #     api_key: os.environ/OPENAI_API_KEY
+
+router_settings:
+  routing_strategy: latency-based-routing
+  fallbacks:
+    - {"mistral-small-local": ["gpt-4o-mini"]}
+  num_retries: 1
+  timeout: 5

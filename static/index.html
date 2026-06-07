@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDR Voice Agent — Demo</title>
+  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #f0f0f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 40px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    }
+
+    .logo {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 32px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #f0f0f0;
+      font-size: 14px;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus {
+      border-color: #555;
+    }
+
+    select option { background: #111; }
+
+    .row { display: flex; gap: 12px; }
+    .row .form-group { flex: 1; }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      margin-top: 8px;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .btn-primary {
+      background: #4f9cf9;
+      color: #fff;
+    }
+
+    .btn-danger {
+      background: #e05252;
+      color: #fff;
+      display: none;
+    }
+
+    /* status */
+    #status {
+      margin-top: 20px;
+      padding: 14px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      display: none;
+    }
+
+    #status.info  { background: #1e2d40; color: #7ec8f0; border: 1px solid #2a4060; }
+    #status.ok    { background: #1a2e1a; color: #6fcf97; border: 1px solid #2a4a2a; }
+    #status.error { background: #2e1a1a; color: #e07070; border: 1px solid #4a2a2a; }
+
+    /* call panel */
+    #call-panel {
+      display: none;
+      margin-top: 24px;
+    }
+
+    .call-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #1a2e1a;
+      border: 1px solid #2a4a2a;
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 14px;
+      color: #6fcf97;
+      margin-bottom: 16px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #6fcf97;
+      animation: pulse 1.4s infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .transcript {
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 14px;
+      min-height: 120px;
+      max-height: 240px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #ccc;
+    }
+
+    .transcript .bot  { color: #7ec8f0; }
+    .transcript .user { color: #f0f0f0; }
+    .transcript .meta { color: #555; font-style: italic; font-size: 12px; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 28px 0;
+    }
+
+    .footnote {
+      font-size: 11px;
+      color: #444;
+      text-align: center;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">SDR Voice Agent</div>
+  <h1>AI Sales Demo</h1>
+  <p class="subtitle">Signal-triggered outbound voice AI. Fill in prospect context and start a live call.</p>
+
+  <div id="setup-panel">
+    <div class="row">
+      <div class="form-group">
+        <label>First Name</label>
+        <input id="first-name" type="text" placeholder="Alex" value="Alex" />
+      </div>
+      <div class="form-group">
+        <label>Company</label>
+        <input id="company" type="text" placeholder="Acme Biotech" value="Acme Biotech" />
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Regulatory Signal</label>
+      <select id="signal-type">
+        <option value="S1">FDA Warning Letter</option>
+        <option value="S2">Form 483 Observation</option>
+        <option value="S3">510(k) Clearance</option>
+        <option value="S4">NDA / BLA Milestone</option>
+        <option value="S7">10-K AI Risk Disclosure</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Signal Summary (optional)</label>
+      <input id="signal-summary" type="text" placeholder="e.g. Warning letter from CDER office, March 2026" />
+    </div>
+
+    <button class="btn btn-primary" id="start-btn" onclick="startCall()">
+      Start Demo Call
+    </button>
+    <button class="btn btn-danger" id="end-btn" onclick="endCall()">
+      End Call
+    </button>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="call-panel">
+    <hr class="divider" />
+    <div class="call-indicator">
+      <div class="dot"></div>
+      AI SDR is live — speak after the greeting
+    </div>
+    <div class="transcript" id="transcript">
+      <span class="meta">Transcript will appear here…</span>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Powered by Pipecat · Daily.co · Mistral (local) · edge-tts · Cal.com
+  </p>
+</div>
+
+<script>
+  let callFrame = null;
+
+  function setStatus(msg, type = "info") {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    el.className = type;
+    el.style.display = "block";
+  }
+
+  function appendTranscript(speaker, text) {
+    const box = document.getElementById("transcript");
+    const line = document.createElement("div");
+    line.className = speaker === "bot" ? "bot" : "user";
+    line.textContent = (speaker === "bot" ? "🤖 Agent: " : "👤 You: ") + text;
+    if (box.querySelector(".meta")) box.querySelector(".meta").remove();
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function startCall() {
+    const startBtn = document.getElementById("start-btn");
+    const endBtn = document.getElementById("end-btn");
+    startBtn.disabled = true;
+    setStatus("Creating demo session…", "info");
+
+    const body = {
+      first_name: document.getElementById("first-name").value || "Alex",
+      company:    document.getElementById("company").value || "",
+      signal_type:    document.getElementById("signal-type").value,
+      signal_summary: document.getElementById("signal-summary").value,
+    };
+
+    let session;
+    try {
+      const resp = await fetch("/demo/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      session = await resp.json();
+    } catch (e) {
+      setStatus("Could not reach the server. Is the backend running?", "error");
+      startBtn.disabled = false;
+      return;
+    }
+
+    if (session.error || !session.room_url) {
+      setStatus(session.error || "Failed to create session.", "error");
+      startBtn.disabled = false;
+      return;
+    }
+
+    setStatus("Joining room… allow microphone access when prompted.", "info");
+
+    callFrame = window.DailyIframe.createCallObject({
+      audioSource: true,
+      videoSource: false,
+    });
+
+    callFrame.on("joined-meeting", () => {
+      setStatus("Connected — the AI agent will speak first.", "ok");
+      document.getElementById("call-panel").style.display = "block";
+      endBtn.style.display = "block";
+    });
+
+    callFrame.on("left-meeting", () => {
+      setStatus("Call ended.", "info");
+      document.getElementById("call-panel").style.display = "none";
+      endBtn.style.display = "none";
+      startBtn.disabled = false;
+      callFrame = null;
+    });
+
+    callFrame.on("error", (e) => {
+      setStatus("Call error: " + (e.errorMsg || JSON.stringify(e)), "error");
+      startBtn.disabled = false;
+    });
+
+    callFrame.on("app-message", (msg) => {
+      if (msg.data?.type === "transcript") {
+        appendTranscript(msg.data.speaker, msg.data.text);
+      }
+    });
+
+    await callFrame.join({ url: session.room_url });
+  }
+
+  async function endCall() {
+    if (callFrame) {
+      await callFrame.leave();
+    }
+  }
+</script>
+</body>
+</html>
