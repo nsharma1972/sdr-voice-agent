@@ -28,6 +28,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
+from pipecat.services.elevenlabs import ElevenLabsTTSService
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
 
 from src import config
@@ -306,10 +307,17 @@ async def run_sdr_pipeline(
         ),
     )
 
-    tts = DeepgramTTSService(
-        api_key = config.DEEPGRAM_API_KEY,
-        voice   = "aura-asteria-en",
-    )
+    if config.ELEVENLABS_API_KEY:
+        tts = ElevenLabsTTSService(
+            api_key  = config.ELEVENLABS_API_KEY,
+            voice_id = config.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM",  # Rachel
+            model    = "eleven_flash_v2_5",
+        )
+    else:
+        tts = DeepgramTTSService(
+            api_key = config.DEEPGRAM_API_KEY,
+            voice   = "aura-asteria-en",
+        )
 
     opening_line = build_opening_line(prospect, signal)
     sdr_policy   = SDRTurnPolicy(signal, opener=opening_line, call_id=call_id)
