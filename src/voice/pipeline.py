@@ -96,7 +96,6 @@ class SDRTurnPolicy(FrameProcessor):
         super().__init__()
         self._call_id  = call_id
         self._outcome  = "needs_review"
-        self._responding = False
         self._bot_speaking = False   # true while TTS audio is playing
         self._ignore_until = 0.0
         self._turn_lock = asyncio.Lock()   # prevents concurrent LLM calls
@@ -128,7 +127,11 @@ class SDRTurnPolicy(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
             if text and not self._bot_speaking and not self._turn_lock.locked() and self._ready():
-                asyncio.ensure_future(self._handle_turn(text))
+                task = asyncio.get_event_loop().create_task(self._handle_turn(text))
+                task.add_done_callback(
+                    lambda t: logger.error("_handle_turn raised: %s", t.exception())
+                    if not t.cancelled() and t.exception() else None
+                )
             else:
                 logger.debug("STT dropped (bot_speaking=%s locked=%s): %s",
                              self._bot_speaking, self._turn_lock.locked(), text[:60])
@@ -166,7 +169,7 @@ class SDRTurnPolicy(FrameProcessor):
         normalised = re.sub(r"\s+dot\s+", ".", normalised, flags=re.IGNORECASE)
         if re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", normalised):
             self._outcome = "booked"
-            return "Perfect, I will get that invite sent over."
+            return "Perfect, I will get that sent over."
         return None
 
     async def _call_llm(self, user_text: str) -> str:
@@ -193,16 +196,21 @@ class SDRTurnPolicy(FrameProcessor):
                 r"Of course|Certainly|Indeed|Sounds good)[,!.]?\s*",
                 "", reply, flags=re.IGNORECASE,
             ).strip()
-            # Take the first substantive sentence; prefer a question if present
+            # Prefer a question; fallback to first sentence
             sentences = [s.strip() for s in re.split(r"(?<=[.?!])\s+", reply) if s.strip()]
             question = next((s for s in sentences if s.endswith("?")), None)
-            reply = question or (sentences[0] if sentences else reply)
-            if reply and not reply[-1] in ".?!":
+            reply = question or (sentences[0] if sentences else None)
+            if not reply:
+                reply = "Could we set up a quick call to discuss this?"
+            if reply[-1] not in ".?!":
                 reply += "."
             reply = reply[:120]
         except Exception as exc:
             logger.warning("LLM error: %s", exc)
+            self._messages.pop()   # don't poison history with an unanswered turn
             reply = "Could you say that again?"
+            self._messages.append({"role": "assistant", "content": reply})
+            return reply
         self._messages.append({"role": "assistant", "content": reply})
         return reply
 
