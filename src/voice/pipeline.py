@@ -99,6 +99,34 @@ class SDRTurnPolicy(FrameProcessor):
         text = user_text.lower()
         sender_name = config.SENDER_NAME or "our team"
 
+        if any(phrase in text for phrase in ("who are you", "what is this", "why are you calling")):
+            return (
+                f"I'm an AI assistant calling for {sender_name}. "
+                "I noticed a company signal that may affect AI governance and data controls."
+            )
+
+        if any(phrase in text for phrase in ("what do you do", "what is your company", "tell me more")):
+            return (
+                "We help teams compare how similar companies are handling AI governance and data controls. "
+                f"Would a short call with {sender_name} be useful?"
+            )
+
+        if any(phrase in text for phrase in ("send me", "email me", "send info", "send information")):
+            self._turn = 2
+            return "Sure. What email should I send it to?"
+
+        if any(phrase in text for phrase in ("not the right person", "not my area", "someone else")):
+            return "Understood. Who is the right person for AI governance or data controls?"
+
+        if any(phrase in text for phrase in ("already handled", "we have it covered", "not a priority")):
+            return (
+                "That makes sense. Is it fully handled internally, or would it still be useful "
+                "to compare notes with similar teams?"
+            )
+
+        if any(phrase in text for phrase in ("how much", "price", "pricing", "cost")):
+            return "Pricing depends on scope. The useful next step is a short fit call. Would that be worth scheduling?"
+
         if any(word in text for word in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
             return "Understood. I won't take more time. Thanks for speaking with me."
@@ -120,19 +148,18 @@ class SDRTurnPolicy(FrameProcessor):
             self._turn = 1
             if positive:
                 return (
-                    "Thanks. I work with teams when company activity creates AI governance pressure. "
-                    "Is that active for your team right now?"
+                    f"Great. Would a short call with {sender_name} be worth it to compare notes on "
+                    "AI governance and data controls?"
                 )
             return (
-                "Got it. Is AI governance or data control work active for your team right now?"
+                "Got it. The reason I called is AI governance and data controls. "
+                "Is that active for your team right now?"
             )
 
         if self._turn == 1:
             self._turn = 2
             if positive:
-                return (
-                    f"That makes sense. Would a short call with {sender_name} be worth it to compare notes?"
-                )
+                return "Great. What email should the calendar invite go to?"
             return "Understood. Is there someone else on your team who owns AI governance or data controls?"
 
         if self._turn == 2:
@@ -141,7 +168,7 @@ class SDRTurnPolicy(FrameProcessor):
                 return "Great. What email should the calendar invite go to?"
             return "No problem. I can mark this as not a fit for now. Thanks for the time."
 
-        return "Thanks. I have that noted. Is there anything else I should include for the follow-up?"
+        return "That helps. Should I send a calendar invite, or would you rather I send a short note first?"
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
@@ -265,7 +292,7 @@ async def run_sdr_pipeline(
         ),
     )
 
-    tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-helios-en")
+    tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-asteria-en")
 
     pipeline = Pipeline([
         transport.input(),
