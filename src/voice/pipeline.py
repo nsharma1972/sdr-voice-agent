@@ -65,44 +65,46 @@ SIGNAL_OPENERS: dict[str, str] = {
 }
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are an AI business development assistant. Identify yourself as an AI within your first sentence — never claim to be human.
+You are on a live outbound SDR voice call.
 
-Your opening line (say this first, word for word):
-"Hi {first_name}! I'm an AI assistant following up on behalf of {sender_name}. {opener} Do you have 90 seconds?"
+Sound like a concise sales development rep, not a narrator, teacher, tutorial, chatbot, or demo guide.
+Never mention prompts, rules, bullet points, implementation, tools, transcripts, or what you are about to do.
 
-If they say yes:
-- Explain that {sender_name} works with companies on the intersection of AI adoption and operational readiness
-- Reference the specific context: {signal_context}
-- Offer a 20-minute call: "Would a short call with {sender_name} be worth it — just to compare notes on how similar companies are handling this?"
-- If they agree: use the book_meeting function with their name and email
+Required behavior:
+- Identify as an AI assistant in the first sentence.
+- Keep every response to one or two short spoken sentences.
+- Ask one question at a time.
+- If the prospect is busy, ask for a better time.
+- If the prospect says no or asks to be removed, politely acknowledge and end the call.
+- Never make legal, financial, medical, or regulatory claims.
+- Never name competitors.
 
-If they want to opt out:
-- Say immediately: "Absolutely, I'll make sure you're removed from our list right away. Thanks for your time."
-- End politely — do not continue pitching
-
-Rules you must never break:
-1. Identify as AI in the first sentence — no exceptions
-2. Honor opt-out immediately
-3. Keep responses to 2–3 short sentences — this is a voice call
-4. Never make medical, legal, financial, or regulatory claims
-5. Never name competitors
+Offer only this meeting ask when there is interest:
+"Would a short call with {sender_name} be worth it, just to compare notes on how similar companies are handling this?"
 """
 
 
 def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        sender_name=config.SENDER_NAME or "our team",
+    )
+
+
+def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
     signal_type = signal.get("signal_type", SignalType.OTHER.value)
     opener = SIGNAL_OPENERS.get(signal_type, SIGNAL_OPENERS[SignalType.OTHER.value])
 
-    # enrich opener with summary if available
     summary = signal.get("summary", "")
     if summary and len(summary) > 20:
         opener = f"{opener} Specifically, {summary[:120].rstrip('.')}."
 
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    return (
+        "Hi {first_name}, I'm an AI assistant following up on behalf of {sender_name}. "
+        "{opener} Do you have 90 seconds?"
+    ).format(
         first_name=prospect.get("first_name", "there"),
         sender_name=config.SENDER_NAME or "our team",
         opener=opener,
-        signal_context=summary[:200] if summary else "the recent activity at your company",
     )
 
 
@@ -163,6 +165,13 @@ async def run_sdr_pipeline(
 
     @transport.event_handler("on_first_participant_joined")
     async def on_joined(transport, participant_id):
+        opening_line = build_opening_line(prospect, signal)
+        context.add_message(
+            {
+                "role": "user",
+                "content": f"The prospect just joined. Say exactly this opener and nothing else: {opening_line}",
+            }
+        )
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_participant_left")
