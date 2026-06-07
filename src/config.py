@@ -21,12 +21,12 @@ LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "")
 LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
 
-# LLM routing — local Mistral via LiteLLM or Ollama directly
+# LLM routing — Groq (free) preferred; falls back to local LiteLLM
+GROQ_API_KEY     = os.environ.get("GROQ_API_KEY", "")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1")
 LLM_MODEL        = os.environ.get("LLM_MODEL", "mistral-small-local")
-LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "none")
+LITELLM_API_KEY  = os.environ.get("LITELLM_API_KEY", "none")
 
-# Cloud LLM fallback — only used when local times out
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # STT — Deepgram free tier: 12K minutes/year; set to empty to skip

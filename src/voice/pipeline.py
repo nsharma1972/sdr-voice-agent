@@ -193,13 +193,21 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _call_llm(self, user_text: str) -> str:
         self._messages.append({"role": "user", "content": user_text})
+        if config.GROQ_API_KEY:
+            url     = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
+            model   = "llama-3.1-8b-instant"
+        else:
+            url     = f"{config.LITELLM_BASE_URL}/chat/completions"
+            headers = {"Authorization": f"Bearer {config.LITELLM_API_KEY}"}
+            model   = config.LLM_MODEL
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
-                    "http://localhost:4000/v1/chat/completions",
-                    headers={"Authorization": "Bearer none"},
+                    url,
+                    headers=headers,
                     json={
-                        "model":       "mistral-small-local",
+                        "model":       model,
                         "messages":    self._messages,
                         "max_tokens":  40,
                         "temperature": 0.3,
