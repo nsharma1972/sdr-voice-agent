@@ -9,6 +9,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.openai import OpenAILLMService
@@ -170,11 +171,11 @@ async def run_sdr_pipeline(
         opening_line = build_opening_line(prospect, signal)
         context.add_message(
             {
-                "role": "user",
-                "content": f"The prospect just joined. Say exactly this opener and nothing else: {opening_line}",
+                "role": "assistant",
+                "content": opening_line,
             }
         )
-        await task.queue_frames([context_aggregator.user().get_context_frame()])
+        await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")
     async def on_left(transport, participant_id, reason):
