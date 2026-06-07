@@ -16,47 +16,95 @@ from pipecat.services.openai import OpenAILLMService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
 from src import config
+from src.signals.base import SignalType
 from src.voice.tools import book_meeting
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_OPENERS = {
-    "S1": "I'm following up on the FDA warning letter your company received recently.",
-    "S2": "I'm following up on the Form 483 observations from your recent FDA inspection.",
-    "S3": "Congratulations on the recent 510(k) clearance. I wanted to reach out because post-market compliance is where teams often get stretched thin right after clearance.",
-    "S4": "I'm following up on the NDA or BLA milestone your company recently hit.",
-    "S7": "I noticed the AI risk language in your company's most recent 10-K.",
+# ── Signal-specific openers — industry-agnostic ──────────────────────────────
+# Each opener references the concrete event so the prospect knows it's not a
+# generic cold call. Parameterized with {summary} from the signal record.
+
+SIGNAL_OPENERS: dict[str, str] = {
+    SignalType.REGULATORY_ACTION.value: (
+        "I'm following up because your company recently went through a regulatory action. "
+        "That typically creates a compressed window to show remediation — "
+        "and that's exactly the kind of situation we work through with leadership teams."
+    ),
+    SignalType.REGULATORY_FILING.value: (
+        "I noticed your company recently disclosed AI or data governance risk in a public filing. "
+        "Once that appears on record, the board and auditors tend to ask for a remediation plan "
+        "on a shorter timeline than most teams expect."
+    ),
+    SignalType.PRODUCT_CLEARANCE.value: (
+        "Congratulations on the recent clearance. Post-launch is usually when compliance "
+        "and data requirements spike faster than the team anticipated — "
+        "we help companies get ahead of that curve."
+    ),
+    SignalType.FUNDING_ROUND.value: (
+        "Congratulations on the recent funding round. "
+        "That kind of growth usually means your processes need to scale just as fast as headcount — "
+        "especially on the data and compliance side."
+    ),
+    SignalType.HIRING_SIGNAL.value: (
+        "I noticed your company is actively hiring for AI or data roles. "
+        "That usually signals a build-out that comes with real governance questions "
+        "that the hiring plan alone doesn't answer."
+    ),
+    SignalType.EXEC_INTERVIEW.value: (
+        "I came across a recent interview where your leadership discussed AI and data strategy. "
+        "I wanted to follow up because we work specifically at that intersection — "
+        "bridging the gap between the strategy and the operational reality."
+    ),
+    SignalType.PRESS_RELEASE.value: (
+        "I saw the recent announcement from your company "
+        "and thought there might be an angle worth a quick conversation."
+    ),
+    SignalType.OTHER.value: (
+        "I'm following up on some recent activity at your company that caught our attention."
+    ),
 }
 
+SYSTEM_PROMPT_TEMPLATE = """\
+You are an AI business development assistant. Identify yourself as an AI within your first sentence — never claim to be human.
 
-def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
-    signal_type = signal.get("signal_type", "S1")
-    opener = SIGNAL_OPENERS.get(signal_type, "I'm following up on a regulatory signal relevant to your company.")
-    first_name = prospect.get("first_name", "there")
-    sender_name = config.SENDER_NAME or "our team"
-
-    return f"""You are an AI business development assistant. You must identify yourself as an AI within the first 5 seconds — never claim to be human.
-
-Opening (say this first, exactly):
+Your opening line (say this first, word for word):
 "Hi {first_name}! I'm an AI assistant following up on behalf of {sender_name}. {opener} Do you have 90 seconds?"
 
 If they say yes:
-- Explain that {sender_name} works with biotech and pharma quality leaders on the intersection of quality systems and AI readiness
-- Reference the specific regulatory context: {signal.get("summary", "the recent regulatory event at your company")}
-- Offer a 20-minute discovery call: "Would it be worth a short call with {sender_name} to compare notes on how similar companies are handling this?"
-- If yes: use the book_meeting function with their name and email
+- Explain that {sender_name} works with companies on the intersection of AI adoption and operational readiness
+- Reference the specific context: {signal_context}
+- Offer a 20-minute call: "Would a short call with {sender_name} be worth it — just to compare notes on how similar companies are handling this?"
+- If they agree: use the book_meeting function with their name and email
 
 If they want to opt out:
-- Say: "Absolutely, I'll make sure you're removed from our list right away. Thank you for your time."
-- End the conversation politely
+- Say immediately: "Absolutely, I'll make sure you're removed from our list right away. Thanks for your time."
+- End politely — do not continue pitching
 
 Rules you must never break:
-- State you are an AI in your first message
-- Never claim to be human, even if asked directly
-- Honor opt-out immediately — no second attempts
-- Keep responses under 3 sentences — this is a phone call, not an email
-- Never make medical, legal, or financial claims
+1. Identify as AI in the first sentence — no exceptions
+2. Honor opt-out immediately
+3. Keep responses to 2–3 short sentences — this is a voice call
+4. Never make medical, legal, financial, or regulatory claims
+5. Never name competitors
 """
+
+
+def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
+    signal_type = signal.get("signal_type", SignalType.OTHER.value)
+    opener = SIGNAL_OPENERS.get(signal_type, SIGNAL_OPENERS[SignalType.OTHER.value])
+
+    # enrich opener with summary if available
+    summary = signal.get("summary", "")
+    if summary and len(summary) > 20:
+        opener = f"{opener} Specifically, {summary[:120].rstrip('.')}."
+
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        first_name=prospect.get("first_name", "there"),
+        sender_name=config.SENDER_NAME or "our team",
+        opener=opener,
+        signal_context=summary[:200] if summary else "the recent activity at your company",
+    )
 
 
 async def run_sdr_pipeline(
@@ -65,14 +113,9 @@ async def run_sdr_pipeline(
     prospect: dict[str, Any],
     signal: dict[str, Any],
 ) -> None:
-    """
-    Start a Pipecat pipeline in a Daily.co room.
-    Called in a background asyncio task per demo session.
-    """
+    """Start a Pipecat pipeline in a Daily.co room."""
     transport = DailyTransport(
-        room_url,
-        token,
-        "SDR Voice Agent",
+        room_url, token, "SDR Voice Agent",
         DailyParams(
             audio_out_enabled=True,
             audio_in_enabled=True,
@@ -84,11 +127,7 @@ async def run_sdr_pipeline(
 
     stt = DeepgramSTTService(api_key=config.DEEPGRAM_API_KEY)
 
-    tts = EdgeTTSTTSService(
-        voice="en-US-GuyNeural",   # professional male voice, free, no key
-        rate="+5%",
-        pitch="-5Hz",
-    )
+    tts = EdgeTTSTTSService(voice="en-US-GuyNeural", rate="+5%", pitch="-5Hz")
 
     llm = OpenAILLMService(
         api_key=config.LITELLM_API_KEY or "none",
@@ -97,45 +136,34 @@ async def run_sdr_pipeline(
     )
 
     system_prompt = build_system_prompt(prospect, signal)
-    messages = [{"role": "system", "content": system_prompt}]
-
-    context = OpenAILLMContext(messages)
+    context = OpenAILLMContext([{"role": "system", "content": system_prompt}])
     context_aggregator = llm.create_context_aggregator(context)
 
-    # Tool: book_meeting
     async def handle_book_meeting(name: str, email: str, preferred_time: str = "next available"):
         result = await book_meeting(name, email, preferred_time)
         return result["message"]
 
     llm.register_function("book_meeting", handle_book_meeting)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            context_aggregator.user(),
-            llm,
-            tts,
-            transport.output(),
-            context_aggregator.assistant(),
-        ]
-    )
+    pipeline = Pipeline([
+        transport.input(),
+        stt,
+        context_aggregator.user(),
+        llm,
+        tts,
+        transport.output(),
+        context_aggregator.assistant(),
+    ])
 
-    task = PipelineTask(
-        pipeline,
-        PipelineParams(
-            allow_interruptions=True,
-            enable_metrics=True,
-        ),
-    )
+    task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_first_participant_joined")
-    async def on_first_participant_joined(transport, participant):
+    async def on_joined(transport, participant):
         transport.capture_participant_transcription(participant["id"])
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_participant_left")
-    async def on_participant_left(transport, participant, reason):
+    async def on_left(transport, participant, reason):
         await task.cancel()
 
     runner = PipelineRunner()

@@ -19,8 +19,9 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from src.db import enqueue_call
 from src.qualify.scorer import Lead, Tier, qualify_leads
-from src.signals.base import Signal
+from src.signals.base import HIGH_URGENCY, Signal, SignalType
 from src.signals.news import fetch_exec_interviews
 from src.signals.press import fetch_press_releases
 from src.signals.sec import fetch_10k_ai_risk
@@ -89,12 +90,56 @@ async def run_pipeline(
         len(leads), len(filtered), min_tier.value,
     )
 
+    # Auto-enqueue CONTACT-tier leads into the call queue
+    enqueued = await _enqueue_contacts(leads)
+    logger.info("auto-enqueued %d CONTACT leads", enqueued)
+
     return {
         "leads":         filtered,
         "signal_counts": signal_counts,
         "total_leads":   len(leads),
         "contact_count": sum(1 for l in leads if l.tier == Tier.CONTACT),
         "nurture_count": sum(1 for l in leads if l.tier == Tier.NURTURE),
+        "enqueued":      enqueued,
         "run_at":        run_at,
         "errors":        errors,
     }
+
+
+async def _enqueue_contacts(leads: list[Lead]) -> int:
+    """Insert CONTACT-tier leads into call_queue. Idempotent — skips if already queued."""
+    from datetime import datetime, timedelta, timezone
+    import zoneinfo
+
+    enqueued = 0
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+
+    # Find next slot within call window (8am–9pm Eastern)
+    if 8 <= now.hour < 21:
+        scheduled = now + timedelta(minutes=2)   # dispatch soon with small jitter
+    else:
+        # Schedule for 8am next weekday
+        next_day = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now.hour >= 21:
+            next_day += timedelta(days=1)
+        scheduled = next_day
+
+    scheduled_iso = scheduled.astimezone(timezone.utc).isoformat()
+
+    for lead in leads:
+        if lead.tier != Tier.CONTACT:
+            continue
+        priority = 80 if (lead.best_signal and lead.best_signal.signal_type in HIGH_URGENCY) else 50
+        qid = await enqueue_call(
+            company_name=lead.company_name,
+            signal_type=lead.best_signal.signal_type.value if lead.best_signal else "S9",
+            signal_summary=lead.primary_summary()[:300],
+            source_url=lead.best_signal.source_url if lead.best_signal else "",
+            scheduled_for=scheduled_iso,
+            priority=priority,
+        )
+        if qid:
+            enqueued += 1
+
+    return enqueued

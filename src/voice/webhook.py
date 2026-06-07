@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import Header, HTTPException, Request
 
 from src import config
+from src.db import insert_call, mark_queue_status
 from src.voice.assistant import build_assistant_payload
 from src.voice.tools import book_meeting, suppress_contact
 
@@ -21,9 +22,7 @@ def _verify_vapi_hmac(body: bytes, signature: str | None) -> None:
     if not signature:
         raise HTTPException(status_code=401, detail="Missing Vapi signature")
     expected = hmac.new(
-        config.VAPI_WEBHOOK_SECRET.encode(),
-        body,
-        hashlib.sha256,
+        config.VAPI_WEBHOOK_SECRET.encode(), body, hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=401, detail="Invalid Vapi signature")
@@ -35,40 +34,32 @@ async def handle_vapi_webhook(
 ) -> dict[str, Any]:
     body = await request.body()
     _verify_vapi_hmac(body, x_vapi_signature)
-
     payload = await request.json()
     msg = payload.get("message", {})
-    msg_type = msg.get("type")
 
-    match msg_type:
-        case "assistant-request":
-            return await _handle_assistant_request(msg)
-        case "function-call":
-            return await _handle_function_call(msg)
+    match msg.get("type"):
+        case "assistant-request":   return await _handle_assistant_request(msg)
+        case "function-call":       return await _handle_function_call(msg)
         case "end-of-call-report":
             await _handle_end_of_call(msg)
             return {"status": "ok"}
         case "status-update":
-            _handle_status_update(msg)
+            logger.debug("call status: %s", msg.get("call", {}).get("status"))
             return {"status": "ok"}
         case _:
-            logger.debug("Unhandled Vapi message type: %s", msg_type)
             return {"status": "ok"}
 
 
 async def _handle_assistant_request(msg: dict) -> dict:
-    """Return per-call assistant config at call-start time."""
     call = msg.get("call", {})
-    metadata = call.get("metadata", {})
-    prospect_id = metadata.get("prospect_id")
+    meta = call.get("metadata", {})
+    prospect_id = meta.get("prospect_id")
 
-    # In a real deployment, fetch prospect + signal from DB here.
-    # For hackathon: return a generic assistant if no metadata.
     if not prospect_id:
         return {
             "assistant": {
                 "name": "sdr-generic",
-                "firstMessage": "Hi, I'm an AI assistant following up on a recent email. Do you have 90 seconds?",
+                "firstMessage": "Hi, I'm an AI assistant following up on a recent signal. Do you have 90 seconds?",
                 "model": {
                     "provider": "custom-llm",
                     "url": config.LITELLM_BASE_URL,
@@ -79,25 +70,20 @@ async def _handle_assistant_request(msg: dict) -> dict:
             }
         }
 
-    prospect = {"id": prospect_id, "first_name": metadata.get("first_name", "there")}
+    prospect = {"id": prospect_id, "first_name": meta.get("first_name", "there")}
     signal = {
-        "signal_type": metadata.get("signal_type", "S1"),
-        "summary": metadata.get("signal_summary", ""),
-        "wl_office": metadata.get("wl_office", "FDA"),
+        "signal_type": meta.get("signal_type", "S1"),
+        "summary": meta.get("signal_summary", ""),
     }
-
     model = _route_model(prospect, signal)
-    assistant = build_assistant_payload(prospect, signal, model)
-    return {"assistant": assistant}
+    return {"assistant": build_assistant_payload(prospect, signal, model)}
 
 
 async def _handle_function_call(msg: dict) -> dict:
-    """Execute a tool call requested by the LLM during the conversation."""
     fn = msg.get("functionCall", {})
     name = fn.get("name")
     params = fn.get("parameters", {})
-    call_meta = msg.get("call", {}).get("metadata", {})
-    prospect_id = call_meta.get("prospect_id", "")
+    prospect_id = msg.get("call", {}).get("metadata", {}).get("prospect_id", "")
 
     match name:
         case "book_meeting":
@@ -106,54 +92,55 @@ async def _handle_function_call(msg: dict) -> dict:
                 prospect_email=params.get("prospect_email", ""),
                 preferred_time=params.get("preferred_time", "next available"),
             )
-            logger.info("book_meeting prospect=%s result=%s", prospect_id, result.get("status"))
+            logger.info("book_meeting prospect=%s status=%s", prospect_id, result.get("status"))
             return {"result": result["message"]}
-
         case "suppress_contact":
-            result = await suppress_contact(prospect_id, params.get("reason", "opt_out"))
-            logger.info("suppress_contact prospect=%s reason=%s", prospect_id, params.get("reason"))
-            return {"result": "Contact suppressed. Call ending."}
-
+            await suppress_contact(prospect_id, params.get("reason", "opt_out"))
+            return {"result": "Contact suppressed. Ending call."}
         case _:
-            logger.warning("Unknown tool call: %s", name)
             return {"result": "Action not available."}
 
 
 async def _handle_end_of_call(msg: dict) -> None:
-    """Persist call outcome to database."""
     call = msg.get("call", {})
     analysis = msg.get("analysis", {})
-    artifact = msg.get("artifact", {})
+    meta = call.get("metadata", {})
 
     outcome_map = {
-        "booked": "booked",
-        "not_interested": "not_interested",
-        "voicemail": "voicemail",
-        "no_answer": "no_answer",
+        "booked": "booked", "not_interested": "not_interested",
+        "voicemail": "voicemail", "no_answer": "no_answer",
         "callback_requested": "callback_requested",
     }
-    raw_outcome = analysis.get("successEvaluation", "no_answer")
-    outcome = outcome_map.get(raw_outcome, "no_answer")
+    raw = analysis.get("successEvaluation", "no_answer")
+    outcome = outcome_map.get(raw, "no_answer")
+
+    queue_id = meta.get("call_queue_id")
+    company  = meta.get("company_name", "unknown")
+    signal_t = meta.get("signal_type", "")
+
+    await insert_call(
+        company_name=company,
+        signal_type=signal_t,
+        outcome=outcome,
+        call_queue_id=queue_id or None,
+        duration_seconds=call.get("duration"),
+        model_used=meta.get("model_used"),
+        transcript_text=msg.get("artifact", {}).get("transcript"),
+        cost_usd=msg.get("cost"),
+        booked_meeting=(outcome == "booked"),
+    )
+
+    if queue_id:
+        await mark_queue_status(queue_id, "completed")
 
     logger.info(
-        "call ended vapi_call_id=%s outcome=%s duration=%.1fs cost=$%.4f",
-        call.get("id"),
-        outcome,
-        call.get("duration", 0),
-        msg.get("cost", 0),
+        "call ended company=%s outcome=%s duration=%.1fs cost=$%.4f",
+        company, outcome, call.get("duration", 0), msg.get("cost", 0),
     )
-    # TODO: persist to calls table via DB session
-
-
-def _handle_status_update(msg: dict) -> None:
-    status = msg.get("call", {}).get("status")
-    logger.debug("call status update: %s", status)
 
 
 def _route_model(prospect: dict, signal: dict) -> str:
-    """Route to cloud model for high-value prospects, local otherwise."""
-    fit_score = prospect.get("fit_score", 0)
-    high_value_signals = {"S1", "S2", "S4"}
-    if fit_score >= 80 and signal.get("signal_type") in high_value_signals:
+    high_value = {"S1", "S2", "S4"}
+    if prospect.get("fit_score", 0) >= 80 and signal.get("signal_type") in high_value:
         return "gpt-4o-mini"
     return "mistral-small-local"
