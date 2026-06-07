@@ -162,11 +162,11 @@ async def run_sdr_pipeline(
     task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
 
     @transport.event_handler("on_first_participant_joined")
-    async def on_joined(participant_id):
+    async def on_joined(transport, participant_id):
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_participant_left")
-    async def on_left(participant_id, reason):
+    async def on_left(transport, participant_id, reason):
         await task.cancel()
 
     runner = PipelineRunner()
