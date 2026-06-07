@@ -32,9 +32,17 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # STT — Deepgram free tier: 12K minutes/year; set to empty to skip
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# Legacy paid TTS providers; unused by the browser demo
-ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+# Cartesia — ~75ms TTFB, free tier 1K chars/day
+CARTESIA_API_KEY  = os.environ.get("CARTESIA_API_KEY", "")
+CARTESIA_VOICE_ID = os.environ.get("CARTESIA_VOICE_ID", "")
+
+# ElevenLabs — Flash v2.5 TTS, free tier user-created voices only
+ELEVENLABS_API_KEY  = os.environ.get("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "")
+
+# Local LLM — set to route to exo cluster via LiteLLM instead of Groq
+# Example: LOCAL_LLM_MODEL=qwen3-30b
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "")
 
 # Cal.com booking — free tier
 CALCOM_API_KEY = os.environ.get("CALCOM_API_KEY", "")

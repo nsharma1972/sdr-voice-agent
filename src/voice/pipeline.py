@@ -29,6 +29,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.cartesia import CartesiaTTSService
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.services.elevenlabs import ElevenLabsTTSService
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
@@ -226,7 +227,12 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def _call_llm(self, user_text: str) -> str:
         self._messages.append({"role": "user", "content": user_text})
-        if config.GROQ_API_KEY:
+        # Local exo cluster first (no network RTT, no variance), then Groq, then LiteLLM
+        if config.LOCAL_LLM_MODEL and config.LITELLM_BASE_URL:
+            url     = f"{config.LITELLM_BASE_URL}/chat/completions"
+            headers = {"Authorization": f"Bearer {config.LITELLM_API_KEY}"}
+            model   = config.LOCAL_LLM_MODEL
+        elif config.GROQ_API_KEY:
             url     = "https://api.groq.com/openai/v1/chat/completions"
             headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
             model   = "llama-3.1-8b-instant"
@@ -305,18 +311,25 @@ class SDRTurnPolicy(FrameProcessor):
 # ── Groq connection warmup ────────────────────────────────────────────────────
 
 async def _warmup_groq(sdr_policy: "SDRTurnPolicy") -> None:
-    """Fire a 1-token dummy request so the TCP/TLS connection is alive before the user speaks."""
-    if not config.GROQ_API_KEY:
+    """Fire a 1-token dummy request so the connection is alive before the user speaks."""
+    if config.LOCAL_LLM_MODEL:
+        url     = f"{config.LITELLM_BASE_URL}/chat/completions"
+        headers = {"Authorization": f"Bearer {config.LITELLM_API_KEY}"}
+        model   = config.LOCAL_LLM_MODEL
+    elif config.GROQ_API_KEY:
+        url     = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
+        model   = "llama-3.1-8b-instant"
+    else:
         return
     try:
         t0 = time.monotonic()
         resp = await sdr_policy._http_client().post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
-            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": "hi"}],
-                  "max_tokens": 1},
+            url, headers=headers,
+            json={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
         )
-        logger.info("Groq warmup %.0fms (status %s)", (time.monotonic() - t0) * 1000, resp.status_code)
+        logger.info("LLM warmup %.0fms (status %s) model=%s",
+                    (time.monotonic() - t0) * 1000, resp.status_code, model)
     except Exception as exc:
         logger.debug("warmup skipped: %s", exc)
 
@@ -350,15 +363,21 @@ async def run_sdr_pipeline(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
             model        = "nova-2",
-            endpointing  = 100,
+            endpointing  = 50,
             smart_format = False,
         ),
     )
 
-    if config.ELEVENLABS_API_KEY:
+    if config.CARTESIA_API_KEY:
+        tts = CartesiaTTSService(
+            api_key  = config.CARTESIA_API_KEY,
+            voice_id = config.CARTESIA_VOICE_ID or "79a125e8-cd45-4c13-8a67-188112f4dd22",
+            model    = "sonic-english",
+        )
+    elif config.ELEVENLABS_API_KEY:
         tts = ElevenLabsTTSService(
             api_key  = config.ELEVENLABS_API_KEY,
-            voice_id = config.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM",  # Rachel
+            voice_id = config.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM",
             model    = "eleven_flash_v2_5",
         )
     else:
