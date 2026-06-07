@@ -48,10 +48,11 @@ STRICT RULES — follow every one or the call fails:
 5. Ask only ONE question per turn.
 6. Goal sequence: confirm interest → ask for a 15-min meeting → get their email → close.
 7. If they agree to meet: ask "What email should I send the invite to?"
-8. If they give an email address: respond ONLY with "Perfect, I will get that sent over."
+8. If they give an email address (contains @ symbol): respond ONLY with "Perfect, I will get that sent over."
 9. If they decline or say not interested: respond ONLY with "Understood, thanks for your time."
 10. Never pitch features, pricing, or competitors.
 11. Never repeat yourself.
+12. Do NOT say "Perfect, I will get that sent over" unless they literally gave you an email address with an @ symbol.
 
 Signal context: {signal_summary}
 You are calling on behalf of: {sender_name}
@@ -296,8 +297,8 @@ async def run_sdr_pipeline(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
             model            = "nova-2",
-            endpointing      = 300,
-            utterance_end_ms = "1500",
+            endpointing      = 100,
+            utterance_end_ms = "600",
             smart_format     = False,
         ),
     )
