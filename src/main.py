@@ -179,16 +179,16 @@ _DEMO_LEADS = [
 
 
 @app.post("/demo/seed-leads")
-async def seed_demo_leads() -> dict:
+async def seed_demo_leads(replace: bool = False) -> dict:
     """Inject realistic CONTACT-tier demo leads into the cache for testing."""
     existing = _pipeline_cache.get("leads", [])
     demo_names = {l["company_name"] for l in _DEMO_LEADS}
-    merged = [l for l in existing if l["company_name"] not in demo_names] + _DEMO_LEADS
+    merged = list(_DEMO_LEADS) if replace else [l for l in existing if l["company_name"] not in demo_names] + _DEMO_LEADS
     merged.sort(key=lambda l: l["score"], reverse=True)
     _pipeline_cache["leads"] = merged
     from datetime import datetime, timezone
-    _pipeline_cache.setdefault("run_at", datetime.now(timezone.utc).isoformat())
-    return {"status": "ok", "seeded": len(_DEMO_LEADS), "total_leads": len(merged)}
+    _pipeline_cache["run_at"] = datetime.now(timezone.utc).isoformat()
+    return {"status": "ok", "seeded": len(_DEMO_LEADS), "total_leads": len(merged), "replace": replace}
 
 
 # ── calls ────────────────────────────────────────────────────────────────────

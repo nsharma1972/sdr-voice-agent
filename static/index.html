@@ -349,7 +349,7 @@ async function seedDemoLeads() {
   const btn = document.getElementById('demo-seed-btn');
   btn.disabled = true; btn.textContent = 'Loading…';
   try {
-    await fetch('/demo/seed-leads', {method:'POST'});
+    await fetch('/demo/seed-leads?replace=true', {method:'POST'});
     await loadLeads();
     document.getElementById('leads-run-info').textContent = '⚡ Demo data loaded — 5 CONTACT-tier leads ready';
   } catch(e) { alert('Seed failed: ' + e.message); }
