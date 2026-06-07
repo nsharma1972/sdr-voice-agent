@@ -163,7 +163,12 @@ class SDRTurnPolicy(FrameProcessor):
         if "are you there" in text or "can you hear" in text:
             return "Yes, I can hear you — do you have a moment?"
 
+        # Match typed email OR spoken "alex at rippling dot com"
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
+        if not email:
+            spoken = re.sub(r"\s+at\s+", "@", user_text, flags=re.IGNORECASE)
+            spoken = re.sub(r"\s+dot\s+", ".", spoken, flags=re.IGNORECASE)
+            email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", spoken)
         if email:
             self._turn = 99
             self._outcome = "booked"
@@ -197,7 +202,13 @@ class SDRTurnPolicy(FrameProcessor):
             self._outcome = "not_interested"
             return "No problem — thanks for a few minutes of your time."
 
-        return "Should I send the calendar invite, or a short note first?"
+        # Turn 3+ means we already asked for email — ask again clearly, then close
+        if self._turn >= 4:
+            self._turn = 99
+            self._outcome = "not_interested"
+            return "No worries — thanks for your time today."
+        self._turn += 1
+        return "What's the best email to send the calendar invite to?"
 
     def _is_booking_intent(self, text: str) -> bool:
         """Strong booking signal — user explicitly wants to schedule, not just agreeing."""
