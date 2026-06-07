@@ -178,11 +178,32 @@
       font-size: 11px; font-weight: 600;
     }
     .outcome-booked           { background: #0e2010; color: #6fcf97; }
+    .outcome-interested       { background: #0e1e30; color: #7ec8f0; }
+    .outcome-needs_review     { background: #201a00; color: #fbbf24; }
     .outcome-voicemail        { background: #1a1a2a; color: #7ec8f0; }
     .outcome-not_interested   { background: #2a1a1a; color: #e07070; }
     .outcome-no_answer        { background: #1a1a1a; color: #666; }
     .outcome-callback_requested { background: #201a00; color: #fbbf24; }
     .outcome-error            { background: #2a1a1a; color: #e07070; }
+
+    .call-grid { display: grid; gap: 12px; }
+    .call-card {
+      background: #101010; border: 1px solid #222; border-radius: 8px;
+      padding: 16px;
+    }
+    .call-head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 14px; margin-bottom: 12px;
+    }
+    .call-title { font-size: 15px; font-weight: 700; margin-bottom: 5px; }
+    .call-meta { display: flex; flex-wrap: wrap; gap: 8px; color: #555; font-size: 12px; }
+    .call-transcript {
+      color: #999; font-size: 13px; line-height: 1.5;
+      border-top: 1px solid #1d1d1d; padding-top: 12px; margin-top: 12px;
+    }
+    .review-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 12px; align-items: start; }
+    .review-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .review-note { min-height: 38px; resize: vertical; }
 
     /* ── spinner ── */
     .spin { display: inline-block; width: 14px; height: 14px;
@@ -295,16 +316,24 @@
       <div class="card">
         <div class="toolbar">
           <div>
-            <h2 style="margin-bottom:2px;">Call Log</h2>
-            <span class="run-info">Outcomes from the call queue</span>
+            <h2 style="margin-bottom:2px;">Call Review Dashboard</h2>
+            <span class="run-info" id="calls-run-info">Demo calls and outbound outcomes ready for qualification</span>
           </div>
           <div class="spacer"></div>
+          <div class="filter-btns">
+            <button class="filter-btn active" onclick="setCallFilter('ALL',this)">All</button>
+            <button class="filter-btn" onclick="setCallFilter('needs_review',this)">Needs Review</button>
+            <button class="filter-btn" onclick="setCallFilter('interested',this)">Interested</button>
+            <button class="filter-btn" onclick="setCallFilter('booked',this)">Booked</button>
+            <button class="filter-btn" onclick="setCallFilter('not_interested',this)">Not Qualified</button>
+          </div>
+          <button class="btn btn-ghost" id="demo-calls-btn" onclick="seedDemoCalls()">⚡ Load Sample Calls</button>
           <button class="btn btn-ghost" onclick="loadCalls()">↻ Refresh</button>
         </div>
         <div id="calls-content">
           <div class="empty-state">
             <div class="icon">📞</div>
-            <p>No calls yet. Start a demo call or run the signal pipeline.</p>
+            <p>No calls yet. Start a demo call, then review it here.</p>
           </div>
         </div>
       </div>
@@ -442,41 +471,118 @@ function callLead(company, signalType, summary) {
   switchTab('demo');
 }
 
-// ── calls log ─────────────────────────────────────────────────────────────────
+// ── call review dashboard ─────────────────────────────────────────────────────
+let _callFilter = 'ALL';
+
+function setCallFilter(outcome, btn) {
+  _callFilter = outcome;
+  btn.closest('.filter-btns').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCalls();
+}
+
+async function seedDemoCalls() {
+  const btn = document.getElementById('demo-calls-btn');
+  btn.disabled = true; btn.textContent = 'Loading…';
+  try {
+    await fetch('/demo/seed-calls', {method:'POST'});
+    await loadCalls();
+    document.getElementById('calls-run-info').textContent = 'Sample call reviews loaded';
+  } catch(e) {
+    alert('Seed failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ Load Sample Calls';
+  }
+}
+
 async function loadCalls() {
-  const resp = await fetch('/calls?limit=100');
+  const params = new URLSearchParams({limit: '100'});
+  if (_callFilter !== 'ALL') params.set('outcome', _callFilter);
+  const resp = await fetch('/calls?' + params.toString());
   const data = await resp.json();
   const container = document.getElementById('calls-content');
+  document.getElementById('calls-run-info').textContent =
+    `${data.total || 0} ${_callFilter === 'ALL' ? 'total calls' : _callFilter.replace('_', ' ') + ' calls'}`;
 
   if (!data.calls || !data.calls.length) {
-    container.innerHTML = `<div class="empty-state"><div class="icon">📞</div><p>No calls logged yet.</p></div>`;
+    container.innerHTML = `<div class="empty-state"><div class="icon">📞</div><p>No calls match this view.</p></div>`;
     return;
   }
 
-  const rows = data.calls.map(c => {
+  const cards = data.calls.map(c => {
     const oc = c.outcome || 'unknown';
-    const dur = c.duration_seconds ? `${Math.round(c.duration_seconds)}s` : '—';
-    const cost = c.cost_usd ? `$${Number(c.cost_usd).toFixed(4)}` : '—';
     const ts = c.created_at ? new Date(c.created_at).toLocaleString() : '—';
-    return `<tr>
-      <td><strong>${esc(c.company_name || '—')}</strong></td>
-      <td><span class="signal-tag">${esc(SIGNAL_LABELS[c.signal_type] || c.signal_type || '—')}</span></td>
-      <td><span class="outcome-pill outcome-${oc}">${oc.replace('_',' ')}</span></td>
-      <td>${dur}</td>
-      <td>${cost}</td>
-      <td style="color:#555;font-size:12px;">${ts}</td>
-    </tr>`;
+    const transcript = c.transcript_text || 'Transcript is not captured for this call yet. Use notes to qualify the demo result.';
+    const reviewed = c.reviewed ? 'Reviewed' : 'Needs review';
+    const booked = c.booked_meeting ? 'Meeting booked' : 'No meeting yet';
+    return `<div class="call-card" data-call-id="${esc(c.id)}">
+      <div class="call-head">
+        <div>
+          <div class="call-title">${esc(c.company_name || 'Demo Prospect')}</div>
+          <div class="call-meta">
+            <span class="signal-tag">${esc(SIGNAL_LABELS[c.signal_type] || c.signal_type || 'Other')}</span>
+            <span>${esc(ts)}</span>
+            <span>${esc(reviewed)}</span>
+            <span>${esc(booked)}</span>
+          </div>
+        </div>
+        <span class="outcome-pill outcome-${esc(oc)}">${esc(oc.replace('_',' '))}</span>
+      </div>
+      <div class="call-transcript">${esc(transcript)}</div>
+      <div class="review-row">
+        <textarea class="review-note" placeholder="Review notes for qualification...">${esc(c.notes || '')}</textarea>
+        <div class="review-actions">
+          <button class="btn btn-ghost btn-sm" data-action="notes">Save Notes</button>
+          <button class="btn btn-primary btn-sm" data-action="interested">Interested</button>
+          <button class="btn btn-primary btn-sm" data-action="booked">Booked</button>
+          <button class="btn btn-danger btn-sm" data-action="not_interested">Not Qualified</button>
+        </div>
+      </div>
+    </div>`;
   }).join('');
 
-  container.innerHTML = `<table>
-    <thead><tr><th>Company</th><th>Signal</th><th>Outcome</th><th>Duration</th><th>Cost</th><th>Time</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  container.innerHTML = `<div class="call-grid">${cards}</div>`;
+  container.querySelectorAll('.call-card').forEach(card => {
+    card.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => reviewCall(card, btn.dataset.action));
+    });
+  });
+}
+
+async function reviewCall(card, action) {
+  const callId = card.dataset.callId;
+  const notes = card.querySelector('.review-note').value;
+  const patch = {notes};
+  if (action === 'interested') {
+    patch.outcome = 'interested';
+    patch.reviewed = true;
+    patch.booked_meeting = false;
+  } else if (action === 'booked') {
+    patch.outcome = 'booked';
+    patch.reviewed = true;
+    patch.booked_meeting = true;
+  } else if (action === 'not_interested') {
+    patch.outcome = 'not_interested';
+    patch.reviewed = true;
+    patch.booked_meeting = false;
+  }
+
+  const resp = await fetch(`/calls/${encodeURIComponent(callId)}/review`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(patch),
+  });
+  if (!resp.ok) {
+    alert('Review update failed.');
+    return;
+  }
+  await loadCalls();
 }
 
 // ── demo call ─────────────────────────────────────────────────────────────────
 let livekitRoom = null;
 let localAudioTrack = null;
+let currentCallId = null;
 
 function setDemoStatus(msg, type) {
   const el = document.getElementById('d-status');
@@ -516,6 +622,7 @@ async function startCall() {
     setDemoStatus(session.error || 'Failed to create session.', 'error');
     startBtn.disabled=false; return;
   }
+  currentCallId = session.call_id || null;
 
   setDemoStatus('Joining room — allow microphone access when prompted.', 'info');
 
@@ -537,6 +644,7 @@ async function startCall() {
       startBtn.disabled=false;
       localAudioTrack = null;
       livekitRoom = null;
+      if (_currentTab === 'calls') loadCalls();
     });
     livekitRoom.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
       try {
@@ -551,6 +659,7 @@ async function startCall() {
 
     setDemoStatus('Connected — AI agent will speak first.', 'ok');
     document.getElementById('call-panel').style.display='block';
+    document.getElementById('transcript').innerHTML = '<span class="meta">Transcript will appear here…</span>';
     endBtn.style.display='block';
   } catch(e) {
     setDemoStatus('Call error: ' + e.message, 'error');
@@ -560,8 +669,16 @@ async function startCall() {
 }
 
 async function endCall() {
+  if (currentCallId) {
+    await fetch(`/calls/${encodeURIComponent(currentCallId)}/review`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({outcome: 'needs_review', reviewed: false}),
+    }).catch(() => {});
+  }
   if (localAudioTrack) localAudioTrack.stop();
   if (livekitRoom) await livekitRoom.disconnect();
+  currentCallId = null;
 }
 
 // ── init ───────────────────────────────────────────────────────────────────────

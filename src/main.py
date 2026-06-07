@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src import config
-from src.db import count_calls, enqueue_call, init_db, list_calls
+from src.db import count_calls, enqueue_call, init_db, insert_call, list_calls, update_call_review
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -71,6 +71,13 @@ class DemoSessionRequest(BaseModel):
     signal_summary: str = ""
 
 
+class CallReviewRequest(BaseModel):
+    outcome: str | None = None
+    reviewed: bool | None = None
+    notes: str | None = None
+    booked_meeting: bool | None = None
+
+
 @app.post("/demo/start")
 async def start_demo(req: DemoSessionRequest) -> dict:
     missing = config.assert_voice_ready()
@@ -82,6 +89,14 @@ async def start_demo(req: DemoSessionRequest) -> dict:
     signal   = {"signal_type": req.signal_type,
                  "summary": req.signal_summary or f"Demo — signal type {req.signal_type}"}
     session = await start_demo_session(prospect, signal)
+    call_id = await insert_call(
+        company_name=req.company or "Demo Prospect",
+        signal_type=req.signal_type,
+        outcome="needs_review",
+        model_used=config.LLM_MODEL,
+        transcript_text="",
+    )
+    session["call_id"] = call_id
     return session
 
 
@@ -191,13 +206,68 @@ async def seed_demo_leads(replace: bool = False) -> dict:
     return {"status": "ok", "seeded": len(_DEMO_LEADS), "total_leads": len(merged), "replace": replace}
 
 
+@app.post("/demo/seed-calls")
+async def seed_demo_calls() -> dict:
+    """Create realistic call-review rows for testing the Calls dashboard."""
+    samples = [
+        {
+            "company_name": "Rippling",
+            "signal_type": "S4",
+            "outcome": "needs_review",
+            "booked_meeting": False,
+            "transcript_text": "Agent opened on the funding round. Prospect asked for a shorter explanation of the AI governance angle.",
+        },
+        {
+            "company_name": "Glean",
+            "signal_type": "S6",
+            "outcome": "interested",
+            "booked_meeting": False,
+            "transcript_text": "Prospect agreed governance is active and asked for examples from similar enterprise search teams.",
+        },
+        {
+            "company_name": "Synthesia",
+            "signal_type": "S2",
+            "outcome": "booked",
+            "booked_meeting": True,
+            "transcript_text": "Prospect accepted a follow-up after discussing deepfake compliance risk and internal review timelines.",
+        },
+    ]
+    created = []
+    for sample in samples:
+        call_id = await insert_call(
+            model_used=config.LLM_MODEL,
+            **sample,
+        )
+        created.append(call_id)
+    return {"status": "ok", "seeded": len(created), "call_ids": created}
+
+
 # ── calls ────────────────────────────────────────────────────────────────────
 
 @app.get("/calls")
-async def get_calls(limit: int = 50, offset: int = 0) -> dict:
-    calls = await list_calls(limit=limit, offset=offset)
-    total = await count_calls()
+async def get_calls(
+    limit: int = 50,
+    offset: int = 0,
+    outcome: str | None = None,
+    reviewed: bool | None = None,
+) -> dict:
+    calls = await list_calls(limit=limit, offset=offset, outcome=outcome, reviewed=reviewed)
+    total = await count_calls(outcome=outcome, reviewed=reviewed)
     return {"calls": calls, "total": total, "limit": limit, "offset": offset}
+
+
+@app.patch("/calls/{call_id}/review")
+async def review_call(call_id: str, req: CallReviewRequest) -> dict:
+    updated = await update_call_review(
+        call_id,
+        outcome=req.outcome,
+        reviewed=req.reviewed,
+        notes=req.notes,
+        booked_meeting=req.booked_meeting,
+    )
+    if not updated:
+        raise HTTPException(404, "Call not found.")
+    return {"status": "ok", "call_id": call_id}
 
 
 @app.post("/webhooks/vapi")

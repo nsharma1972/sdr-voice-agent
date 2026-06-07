@@ -175,18 +175,69 @@ async def insert_call(
     return cid
 
 
-async def list_calls(limit: int = 50, offset: int = 0) -> list[dict]:
+async def list_calls(
+    limit: int = 50,
+    offset: int = 0,
+    outcome: str | None = None,
+    reviewed: bool | None = None,
+) -> list[dict]:
     async with get_db() as db:
+        where = []
+        params: list = []
+        if outcome:
+            where.append("outcome=?")
+            params.append(outcome)
+        if reviewed is not None:
+            where.append("reviewed=?")
+            params.append(int(reviewed))
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         cursor = await db.execute(
-            "SELECT * FROM calls ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT * FROM calls {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-async def count_calls() -> int:
+async def count_calls(outcome: str | None = None, reviewed: bool | None = None) -> int:
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM calls")
+        where = []
+        params: list = []
+        if outcome:
+            where.append("outcome=?")
+            params.append(outcome)
+        if reviewed is not None:
+            where.append("reviewed=?")
+            params.append(int(reviewed))
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        cursor = await db.execute(f"SELECT COUNT(*) FROM calls {where_sql}", params)
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+
+async def update_call_review(
+    call_id: str,
+    *,
+    outcome: str | None = None,
+    reviewed: bool | None = None,
+    notes: str | None = None,
+    booked_meeting: bool | None = None,
+) -> bool:
+    async with get_db() as db:
+        cursor = await db.execute(
+            """UPDATE calls
+               SET outcome=COALESCE(?, outcome),
+                   reviewed=COALESCE(?, reviewed),
+                   notes=COALESCE(?, notes),
+                   booked_meeting=COALESCE(?, booked_meeting)
+               WHERE id=?""",
+            (
+                outcome,
+                None if reviewed is None else int(reviewed),
+                notes,
+                None if booked_meeting is None else int(booked_meeting),
+                call_id,
+            ),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
