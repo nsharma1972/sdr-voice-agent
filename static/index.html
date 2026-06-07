@@ -390,7 +390,9 @@ async function loadLeads() {
 }
 
 function renderLeads() {
-  const leads = _tierFilter === 'ALL' ? _allLeads : _allLeads.filter(l => l.tier === _tierFilter);
+  const leads = _tierFilter === 'ALL'
+    ? _allLeads.map((lead, index) => ({lead, index}))
+    : _allLeads.map((lead, index) => ({lead, index})).filter(item => item.lead.tier === _tierFilter);
   const container = document.getElementById('leads-content');
 
   if (!leads.length) {
@@ -399,17 +401,18 @@ function renderLeads() {
     return;
   }
 
-  const rows = leads.map(l => {
+  const rows = leads.map(({lead: l, index}) => {
     const sc = l.tier === 'CONTACT' ? 'contact' : l.tier === 'NURTURE' ? 'nurture' : 'archive';
     const sig = SIGNAL_LABELS[l.primary_signal] || l.primary_signal;
-    const src = l.source_url ? `<a href="${l.source_url}" target="_blank" style="color:#4f9cf9;font-size:11px;">↗ source</a>` : '';
-    const callBtn = `<button class="btn btn-primary btn-sm" onclick="callLead(${JSON.stringify(l.company_name)},${JSON.stringify(l.primary_signal)},${JSON.stringify(l.summary)})">Call</button>`;
+    const summary = String(l.summary || '');
+    const src = l.source_url ? `<a href="${esc(l.source_url)}" target="_blank" rel="noopener" style="color:#4f9cf9;font-size:11px;">↗ source</a>` : '';
+    const callBtn = `<button class="btn btn-primary btn-sm" data-lead-index="${index}">Call</button>`;
     return `<tr>
       <td><span class="score-badge score-${sc}">${l.score}</span></td>
       <td><span class="tier-pill tier-${sc}">${l.tier}</span></td>
       <td><span class="company-link">${esc(l.company_name)}</span></td>
       <td><span class="signal-tag">${esc(sig)}</span></td>
-      <td class="summary-cell"><p title="${esc(l.summary)}">${esc(l.summary.substring(0,80))}${l.summary.length>80?'…':''} ${src}</p></td>
+      <td class="summary-cell"><p title="${esc(summary)}">${esc(summary.substring(0,80))}${summary.length>80?'…':''} ${src}</p></td>
       <td>${callBtn}</td>
     </tr>`;
   }).join('');
@@ -420,12 +423,22 @@ function renderLeads() {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+
+  container.querySelectorAll('button[data-lead-index]').forEach(btn => {
+    btn.addEventListener('click', () => callLeadByIndex(Number(btn.dataset.leadIndex)));
+  });
+}
+
+function callLeadByIndex(index) {
+  const lead = _allLeads[index];
+  if (!lead) return;
+  callLead(lead.company_name, lead.primary_signal, lead.summary || '');
 }
 
 function callLead(company, signalType, summary) {
   document.getElementById('d-company').value = company;
   document.getElementById('d-signal').value = signalType;
-  document.getElementById('d-summary').value = summary.substring(0, 120);
+  document.getElementById('d-summary').value = String(summary || '').substring(0, 120);
   switchTab('demo');
 }
 
