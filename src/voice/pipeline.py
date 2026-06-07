@@ -230,10 +230,9 @@ async def run_sdr_pipeline(
     stt = DeepgramSTTService(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
-            model            = "nova-3",
-            endpointing      = 150,
-            utterance_end_ms = "600",
-            no_delay         = True,
+            model            = "nova-2",
+            endpointing      = 200,
+            utterance_end_ms = "1000",
             smart_format     = False,
         ),
     )
