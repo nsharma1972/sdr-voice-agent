@@ -1,9 +1,10 @@
-"""Pipecat voice pipeline — LiveKit + Deepgram + LiteLLM/Mistral."""
+"""Pipecat voice pipeline — LiveKit + Deepgram demo SDR policy."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 
 import certifi
@@ -17,14 +18,11 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext, OpenAILLMContextFrame
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
-from pipecat.services.openai import OpenAILLMService
 from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
 
 from src import config
 from src.signals.base import SignalType
-from src.voice.tools import book_meeting
 
 logger = logging.getLogger(__name__)
 
@@ -45,24 +43,76 @@ class ConversationProbe(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class TranscriptToLLM(FrameProcessor):
-    """Turn final STT transcripts into immediate LLM requests."""
+class SDRTurnPolicy(FrameProcessor):
+    """Deterministic SDR turn policy for the browser demo."""
 
-    def __init__(self, context: OpenAILLMContext):
+    def __init__(self, signal: dict[str, Any]):
         super().__init__()
-        self._context = context
+        self._signal = signal
+        self._turn = 0
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
             if text:
-                self._context.add_message({"role": "user", "content": text})
-                await self.push_frame(OpenAILLMContextFrame(self._context))
+                reply = self._reply(text)
+                logger.info("sdr reply: %s", reply)
+                await self.push_frame(TextFrame(reply))
             return
         if isinstance(frame, InterimTranscriptionFrame):
             return
         await self.push_frame(frame, direction)
+
+    def _reply(self, user_text: str) -> str:
+        text = user_text.lower()
+        sender_name = config.SENDER_NAME or "our team"
+
+        if any(word in text for word in ("remove me", "not interested", "no thanks", "stop calling")):
+            self._turn = 99
+            return "Understood. I won't take more time. Thanks for speaking with me."
+
+        if any(word in text for word in ("busy", "bad time", "call me later", "not now")):
+            return "No problem. What is a better time for a quick follow-up?"
+
+        if "are you there" in text or "can you hear" in text:
+            return "Yes, I'm here and I can hear you. I was calling to ask one quick question about your AI governance work."
+
+        email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
+        if email:
+            self._turn = 99
+            return "Thanks. I'll note that for the follow-up invite. Anything specific you would want covered?"
+
+        positive = any(word in text for word in ("yes", "yeah", "yep", "sure", "okay", "ok", "i do", "go ahead"))
+
+        if self._turn == 0:
+            self._turn = 1
+            if positive:
+                return (
+                    "Thanks. The quick reason I called is that this kind of company activity often creates pressure "
+                    "around AI governance and data controls. Is that something your team is actively working on?"
+                )
+            return (
+                "Got it. The quick question is whether AI governance or data controls are becoming active priorities "
+                "for your team right now."
+            )
+
+        if self._turn == 1:
+            self._turn = 2
+            if positive:
+                return (
+                    f"That makes sense. Would a short call with {sender_name} be worth it, "
+                    "just to compare notes on how similar companies are handling this?"
+                )
+            return "Understood. Is there someone else on your team who owns AI governance or data controls?"
+
+        if self._turn == 2:
+            self._turn = 3
+            if positive:
+                return "Great. What email should the calendar invite go to?"
+            return "No problem. I can mark this as not a fit for now. Thanks for the time."
+
+        return "Thanks. I have that noted. Is there anything else I should include for the follow-up?"
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
@@ -181,32 +231,14 @@ async def run_sdr_pipeline(
 
     tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-helios-en")
 
-    llm = OpenAILLMService(
-        api_key=config.LITELLM_API_KEY or "none",
-        base_url=config.LITELLM_BASE_URL,
-        model=config.LLM_MODEL,
-    )
-
-    system_prompt = build_system_prompt(prospect, signal)
-    context = OpenAILLMContext([{"role": "system", "content": system_prompt}])
-    context_aggregator = llm.create_context_aggregator(context)
-
-    async def handle_book_meeting(name: str, email: str, preferred_time: str = "next available"):
-        result = await book_meeting(name, email, preferred_time)
-        return result["message"]
-
-    llm.register_function("book_meeting", handle_book_meeting)
-
     pipeline = Pipeline([
         transport.input(),
         stt,
         ConversationProbe("stt"),
-        TranscriptToLLM(context),
-        llm,
-        ConversationProbe("llm"),
+        SDRTurnPolicy(signal),
+        ConversationProbe("sdr"),
         tts,
         transport.output(),
-        context_aggregator.assistant(),
     ])
 
     task = PipelineTask(pipeline, PipelineParams(allow_interruptions=True))
@@ -214,12 +246,6 @@ async def run_sdr_pipeline(
     @transport.event_handler("on_first_participant_joined")
     async def on_joined(transport, participant_id):
         opening_line = build_opening_line(prospect, signal)
-        context.add_message(
-            {
-                "role": "assistant",
-                "content": opening_line,
-            }
-        )
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")
