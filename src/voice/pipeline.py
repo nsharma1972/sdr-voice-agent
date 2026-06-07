@@ -47,13 +47,15 @@ class ConversationProbe(FrameProcessor):
 class SDRTurnPolicy(FrameProcessor):
     """Deterministic SDR turn policy for the browser demo."""
 
-    def __init__(self, signal: dict[str, Any]):
+    def __init__(self, signal: dict[str, Any], call_id: str | None = None):
         super().__init__()
         self._signal = signal
+        self._call_id = call_id
         self._turn = 0
         self._pending_interim_text = ""
         self._pending_interim_task: asyncio.Task | None = None
         self._ignore_until = 0.0
+        self._transcript: list[tuple[str, str]] = []  # (speaker, text)
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -61,6 +63,7 @@ class SDRTurnPolicy(FrameProcessor):
             text = frame.text.strip()
             self._cancel_pending_interim()
             if text and self._accept_user_text():
+                self._transcript.append(("prospect", text))
                 await self._send_reply(text)
             return
         if isinstance(frame, InterimTranscriptionFrame):
@@ -82,15 +85,30 @@ class SDRTurnPolicy(FrameProcessor):
             await asyncio.sleep(0.6)
             if text == self._pending_interim_text:
                 self._pending_interim_text = ""
+                self._transcript.append(("prospect", text))
                 await self._send_reply(text)
         except asyncio.CancelledError:
             pass
 
     async def _send_reply(self, user_text: str) -> None:
         reply = self._reply(user_text)
-        self._ignore_until = asyncio.get_running_loop().time() + 3.5
+        # Scale ignore window to approximate TTS duration: ~0.08s/word + 0.8s buffer
+        word_count = len(reply.split())
+        self._ignore_until = asyncio.get_running_loop().time() + (word_count * 0.08) + 0.8
+        self._transcript.append(("agent", reply))
         logger.info("sdr reply: %s", reply)
         await self.push_frame(TextFrame(reply))
+
+    async def flush_transcript(self) -> None:
+        """Persist collected transcript to the calls DB record."""
+        if not self._call_id or not self._transcript:
+            return
+        text = "\n".join(f"{spk.upper()}: {line}" for spk, line in self._transcript)
+        try:
+            from src.db import update_call_review
+            await update_call_review(self._call_id, notes=text)
+        except Exception as exc:
+            logger.warning("transcript flush failed: %s", exc)
 
     def _accept_user_text(self) -> bool:
         return asyncio.get_running_loop().time() >= self._ignore_until
@@ -121,62 +139,77 @@ class SDRTurnPolicy(FrameProcessor):
 
         if any(phrase in text for phrase in ("send me", "email me", "send info", "send information")):
             self._turn = 2
-            return "Sure, what email should I send it to?"
+            return "Of course — what email should I send it to?"
 
         if any(phrase in text for phrase in ("not the right person", "not my area", "someone else")):
-            return "Understood, who is the right person for AI governance or data controls?"
+            return "Got it — who is the right person for AI governance or data controls?"
 
         if any(phrase in text for phrase in ("already handled", "we have it covered", "not a priority")):
             return (
-                "That makes sense. Is it fully handled internally, or would it still be useful "
-                "to compare notes with similar teams?"
+                "That makes sense. Is it fully handled internally, "
+                "or would it be useful to compare notes with similar teams?"
             )
 
         if any(phrase in text for phrase in ("how much", "price", "pricing", "cost")):
-            return "Pricing depends on scope, so the useful next step is a short fit call, would that be worth scheduling?"
+            return "Pricing really depends on scope — the useful first step is a short fit call, would that work?"
 
         if any(phrase in text for phrase in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
-            return "Understood, I won't take more time, thanks for speaking with me."
+            return "Understood, I won't take more of your time — thanks for speaking with me."
 
         if any(word in text for word in ("busy", "bad time", "call me later", "not now")):
-            return "No problem, what is a better time for a quick follow-up?"
+            return "No problem at all — what would be a better time for a quick follow-up?"
 
         if "are you there" in text or "can you hear" in text:
-            return "Yes, I'm here and I can hear you, I was calling to ask one quick question about your AI governance work."
+            return "Yes, I can hear you — I was just calling to ask one quick question about AI governance. Do you have a moment?"
 
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_text)
         if email:
             self._turn = 99
-            return "Thanks, I'll note that for the follow-up invite, anything specific you would want covered?"
+            return "Perfect, I'll get that invite sent over — is there anything specific you would want covered on the call?"
 
         positive = self._is_positive(text)
 
         if self._turn == 0:
             self._turn = 1
+            # Strong booking intent at turn 0 (user said "let's do it" to opener) → skip to email
+            if self._is_booking_intent(text):
+                self._turn = 3
+                return f"Love that energy. What email should I use for the calendar invite with {sender_name}?"
             if positive:
                 return (
-                    f"Great, would a fifteen minute call with {sender_name} be worth scheduling "
-                    "to compare AI governance notes?"
+                    f"Great, the quick reason I called is AI governance and data controls — "
+                    "is that active for your team right now?"
                 )
             return (
-                "The quick reason I called is AI governance and data controls, "
-                "is that active for your team?"
+                "No worries, I will be quick. We work with teams on AI governance and data controls — "
+                "is that on your radar?"
             )
 
         if self._turn == 1:
             self._turn = 2
-            if positive:
-                return "Great, what email should I use for the calendar invite?"
-            return "Understood, is there someone else on your team who owns AI governance or data controls?"
+            if positive or self._is_booking_intent(text):
+                return f"Good to hear. What email should I use for a calendar invite with {sender_name}?"
+            return "Understood — who on your team owns AI governance or data quality?"
 
         if self._turn == 2:
             self._turn = 3
-            if positive:
-                return "Great, what email should I use for the calendar invite?"
-            return "No problem, I will mark this as not a fit for now, thanks for the time and I will end the call here."
+            if positive or self._is_booking_intent(text):
+                return f"Perfect, what email should I send the invite to?"
+            return "Got it, I will note that and close out here — thanks for a few minutes."
 
-        return "That helps, should I send a calendar invite, or would you rather get a short note first?"
+        return "Thanks for that. Should I send a short note, or go ahead and send the calendar invite?"
+
+    def _is_booking_intent(self, text: str) -> bool:
+        """Strong booking signal — user explicitly wants to schedule, not just agreeing."""
+        normalized = re.sub(r"[^a-z0-9\s']", " ", text.lower()).strip()
+        booking_phrases = (
+            "let's do it", "lets do it", "book it", "schedule it", "set it up",
+            "set up a call", "have a call", "want to have a call", "i want a call",
+            "i'd like a call", "i would like a call", "send invite", "send the invite",
+            "calendar invite", "send me a calendar", "go ahead and book",
+        )
+        return any(re.search(rf"\b{re.escape(p)}\b", normalized) for p in booking_phrases)
 
     def _is_positive(self, text: str) -> bool:
         normalized = re.sub(r"[^a-z0-9\s']", " ", text.lower())
@@ -307,6 +340,7 @@ async def run_sdr_pipeline(
     room_name: str,
     prospect: dict[str, Any],
     signal: dict[str, Any],
+    call_id: str | None = None,
 ) -> None:
     """Start a Pipecat pipeline in a LiveKit room."""
     transport = LiveKitTransport(
@@ -335,11 +369,13 @@ async def run_sdr_pipeline(
 
     tts = DeepgramTTSService(api_key=config.DEEPGRAM_API_KEY, voice="aura-asteria-en")
 
+    sdr_policy = SDRTurnPolicy(signal, call_id=call_id)
+
     pipeline = Pipeline([
         transport.input(),
         stt,
         ConversationProbe("stt"),
-        SDRTurnPolicy(signal),
+        sdr_policy,
         ConversationProbe("sdr"),
         tts,
         transport.output(),
@@ -354,12 +390,13 @@ async def run_sdr_pipeline(
         if opener_started:
             return
         opener_started = True
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.5)
         opening_line = build_opening_line(prospect, signal)
         await task.queue_frames([TTSSpeakFrame(opening_line)])
 
     @transport.event_handler("on_participant_left")
     async def on_left(transport, participant_id, reason):
+        await sdr_policy.flush_transcript()
         await task.cancel()
 
     runner = PipelineRunner()

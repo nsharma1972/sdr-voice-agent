@@ -44,6 +44,7 @@ def _create_token(
 async def start_demo_session(
     prospect: dict[str, Any],
     signal: dict[str, Any],
+    call_id: str | None = None,
 ) -> dict[str, str]:
     """
     Create LiveKit join credentials, launch the Pipecat bot, and return browser
@@ -67,7 +68,7 @@ async def start_demo_session(
     )
 
     task = asyncio.create_task(
-        run_sdr_pipeline(config.LIVEKIT_URL, bot_token, room_name, prospect, signal),
+        run_sdr_pipeline(config.LIVEKIT_URL, bot_token, room_name, prospect, signal, call_id=call_id),
         name=f"bot-{room_name}",
     )
     _active_sessions[room_name] = task

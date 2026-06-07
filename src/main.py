@@ -88,14 +88,13 @@ async def start_demo(req: DemoSessionRequest) -> dict:
     prospect = {"id": "demo", "first_name": req.first_name, "company": req.company, "fit_score": 75}
     signal   = {"signal_type": req.signal_type,
                  "summary": req.signal_summary or f"Demo — signal type {req.signal_type}"}
-    session = await start_demo_session(prospect, signal)
     call_id = await insert_call(
         company_name=req.company or "Demo Prospect",
         signal_type=req.signal_type,
         outcome="needs_review",
-        model_used=config.LLM_MODEL,
-        transcript_text="",
+        model_used="deterministic-sdr",
     )
+    session = await start_demo_session(prospect, signal, call_id=call_id)
     session["call_id"] = call_id
     return session
 
