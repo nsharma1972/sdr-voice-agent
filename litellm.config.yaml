@@ -4,7 +4,7 @@ model_list:
       model: openai/mistral:latest
       api_base: http://localhost:11434/v1
       api_key: none
-      timeout: 4.0
+      timeout: 30.0
 
   # Uncomment to enable cloud fallback when local times out
   # - model_name: gpt-4o-mini
@@ -17,4 +17,4 @@ router_settings:
   fallbacks:
     - {"mistral-small-local": ["gpt-4o-mini"]}
   num_retries: 1
-  timeout: 5
+  timeout: 30

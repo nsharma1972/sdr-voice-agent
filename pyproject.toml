@@ -18,6 +18,8 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "pydantic>=2.7.0",
     "python-multipart>=0.0.9",
+    "litellm[proxy]>=1.88.0",
+    "openai>=2.41.0",
     # Voice pipeline (free stack)
     "pipecat-ai[livekit,deepgram,silero,openai]==0.0.50",
     "aiofiles>=23.2.1",
