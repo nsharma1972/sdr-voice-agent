@@ -99,6 +99,7 @@ class SDRTurnPolicy(FrameProcessor):
         self._responding = False
         self._bot_speaking = False   # true while TTS audio is playing
         self._ignore_until = 0.0
+        self._turn_lock = asyncio.Lock()   # prevents concurrent LLM calls
         self._transcript: list[tuple[str, str]] = [("agent", opener)]
 
         system = _SYSTEM_PROMPT.format(
@@ -126,8 +127,11 @@ class SDRTurnPolicy(FrameProcessor):
             return
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
-            if text and not self._bot_speaking and not self._responding and self._ready():
-                await self._handle_turn(text)
+            if text and not self._bot_speaking and not self._turn_lock.locked() and self._ready():
+                asyncio.ensure_future(self._handle_turn(text))
+            else:
+                logger.debug("STT dropped (bot_speaking=%s locked=%s): %s",
+                             self._bot_speaking, self._turn_lock.locked(), text[:60])
             return
         await self.push_frame(frame, direction)
 
@@ -137,24 +141,23 @@ class SDRTurnPolicy(FrameProcessor):
     # ── LLM call ──────────────────────────────────────────────────────────────
 
     async def _handle_turn(self, user_text: str) -> None:
-        self._responding  = True
-        self._ignore_until = asyncio.get_running_loop().time() + 0.4
-        self._transcript.append(("prospect", user_text))
-
-        try:
-            # Email detection first — no LLM needed
-            reply = self._check_email(user_text)
-            if reply is None:
-                reply = await self._call_llm(user_text)
-                self._detect_outcome(reply)
-            self._transcript.append(("agent", reply))
-            logger.info("SDR → %s", reply)
-            await self.push_frame(TextFrame(reply))
-        except Exception as exc:
-            logger.warning("turn handler error: %s", exc)
-            await self.push_frame(TextFrame("Sorry — could you say that again?"))
-        finally:
-            self._responding = False
+        if self._turn_lock.locked():
+            return
+        async with self._turn_lock:
+            self._ignore_until = asyncio.get_running_loop().time() + 0.4
+            self._transcript.append(("prospect", user_text))
+            logger.info("USER → %s", user_text)
+            try:
+                reply = self._check_email(user_text)
+                if reply is None:
+                    reply = await self._call_llm(user_text)
+                    self._detect_outcome(reply)
+                self._transcript.append(("agent", reply))
+                logger.info("SDR → %s", reply)
+                await self.push_frame(TextFrame(reply))
+            except Exception as exc:
+                logger.warning("turn handler error: %s", exc)
+                await self.push_frame(TextFrame("Sorry — could you say that again?"))
 
     def _check_email(self, user_text: str) -> str | None:
         """Return a closing line if user gave an email, else None."""
@@ -183,10 +186,20 @@ class SDRTurnPolicy(FrameProcessor):
                 )
             resp.raise_for_status()
             reply = resp.json()["choices"][0]["message"]["content"].strip()
-            # Strip markdown, bullet points, multi-sentence overflow
             reply = re.sub(r"[*_`#]", "", reply)
-            reply = reply.split(".")[0].strip() + ("." if not reply.endswith("?") else "")
-            reply = reply[:120]  # hard cap
+            # Strip leading filler acknowledgments (LLM loves starting with "Yes, ...")
+            reply = re.sub(
+                r"^(Yes|Sure|Right|Okay|OK|Got it|Alright|Absolutely|Great|Understood|"
+                r"Of course|Certainly|Indeed|Sounds good)[,!.]?\s*",
+                "", reply, flags=re.IGNORECASE,
+            ).strip()
+            # Take the first substantive sentence; prefer a question if present
+            sentences = [s.strip() for s in re.split(r"(?<=[.?!])\s+", reply) if s.strip()]
+            question = next((s for s in sentences if s.endswith("?")), None)
+            reply = question or (sentences[0] if sentences else reply)
+            if reply and not reply[-1] in ".?!":
+                reply += "."
+            reply = reply[:120]
         except Exception as exc:
             logger.warning("LLM error: %s", exc)
             reply = "Could you say that again?"
@@ -248,8 +261,8 @@ async def run_sdr_pipeline(
         api_key      = config.DEEPGRAM_API_KEY,
         live_options = LiveOptions(
             model            = "nova-2",
-            endpointing      = 200,
-            utterance_end_ms = "1000",
+            endpointing      = 300,
+            utterance_end_ms = "1500",
             smart_format     = False,
         ),
     )
