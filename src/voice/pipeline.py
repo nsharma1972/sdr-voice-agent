@@ -135,7 +135,7 @@ class SDRTurnPolicy(FrameProcessor):
         if any(phrase in text for phrase in ("how much", "price", "pricing", "cost")):
             return "Pricing depends on scope, so the useful next step is a short fit call, would that be worth scheduling?"
 
-        if any(word in text for word in ("remove me", "not interested", "no thanks", "stop calling")):
+        if any(phrase in text for phrase in ("remove me", "not interested", "no thanks", "stop calling")):
             self._turn = 99
             return "Understood, I won't take more time, thanks for speaking with me."
 
@@ -156,30 +156,64 @@ class SDRTurnPolicy(FrameProcessor):
             self._turn = 1
             if positive:
                 return (
-                    f"Great, would a short call with {sender_name} be worth it to compare notes on "
-                    "AI governance and data controls?"
+                    f"Great, would a fifteen minute call with {sender_name} be worth scheduling "
+                    "to compare AI governance notes?"
                 )
             return (
-                "Got it, the reason I called is AI governance and data controls, "
-                "is that active for your team right now?"
+                "The quick reason I called is AI governance and data controls, "
+                "is that active for your team?"
             )
 
         if self._turn == 1:
             self._turn = 2
             if positive:
-                return "Great, what email should the calendar invite go to?"
+                return "Great, what email should I use for the calendar invite?"
             return "Understood, is there someone else on your team who owns AI governance or data controls?"
 
         if self._turn == 2:
             self._turn = 3
             if positive:
-                return "Great, what email should the calendar invite go to?"
-            return "No problem, I can mark this as not a fit for now, thanks for the time."
+                return "Great, what email should I use for the calendar invite?"
+            return "No problem, I will mark this as not a fit for now, thanks for the time and I will end the call here."
 
-        return "That helps, should I send a calendar invite, or would you rather I send a short note first?"
+        return "That helps, should I send a calendar invite, or would you rather get a short note first?"
 
     def _is_positive(self, text: str) -> bool:
-        return any(word in text for word in ("yes", "yeah", "yep", "sure", "okay", "ok", "i do", "go ahead"))
+        normalized = re.sub(r"[^a-z0-9\s']", " ", text.lower())
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        positive_phrases = (
+            "yes",
+            "yeah",
+            "yep",
+            "sure",
+            "okay",
+            "ok",
+            "i do",
+            "go ahead",
+            "sounds good",
+            "that works",
+            "works for me",
+            "let's do it",
+            "lets do it",
+            "book it",
+            "schedule it",
+            "set it up",
+            "set up a call",
+            "have a call",
+            "want to have a call",
+            "i want a call",
+            "i'd like a call",
+            "i would like a call",
+            "send invite",
+            "send the invite",
+            "calendar invite",
+            "i confirm",
+            "confirmed",
+            "i agree",
+            "agreed",
+            "perfect",
+        )
+        return any(re.search(rf"\b{re.escape(phrase)}\b", normalized) for phrase in positive_phrases)
 
 # ── Signal-specific openers — industry-agnostic ──────────────────────────────
 # Each opener references the concrete event so the prospect knows it's not a
@@ -254,16 +288,12 @@ def build_system_prompt(prospect: dict[str, Any], signal: dict[str, Any]) -> str
 
 
 def build_opening_line(prospect: dict[str, Any], signal: dict[str, Any]) -> str:
-    signal_type = signal.get("signal_type", SignalType.OTHER.value)
-    signal_label = signal_type.replace("_", " ").lower()
-    summary = signal.get("summary", "")
-    context = f"I noticed {summary[:90].rstrip('.')}." if summary and len(summary) > 20 else (
-        f"I noticed a recent {signal_label} signal at your company."
-    )
+    company = prospect.get("company") or "your company"
+    context = f"I noticed recent activity at {company}"
 
     return (
-        "Hi {first_name}, I'm an AI assistant following up on behalf of {sender_name}. "
-        "{context} Do you have 90 seconds?"
+        "Hi {first_name}, I'm an AI assistant calling for {sender_name}. "
+        "{context} around AI governance. Do you have 90 seconds?"
     ).format(
         first_name=prospect.get("first_name", "there"),
         sender_name=config.SENDER_NAME or "our team",
