@@ -18,6 +18,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    InterimTranscriptionFrame,
     TextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
@@ -114,16 +115,30 @@ class SDRTurnPolicy(FrameProcessor):
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, BotStartedSpeakingFrame):
+
+        # Outbound speech — set flag early so STT is blocked before TTS even starts
+        if isinstance(frame, (TTSSpeakFrame, TextFrame)) and direction == FrameDirection.DOWNSTREAM:
             self._bot_speaking = True
             await self.push_frame(frame, direction)
             return
+
+        # Bot finished speaking — open the mic again (with brief cooldown)
         if isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
-            # small cooldown after bot finishes so the mic tail doesn't trigger
             self._ignore_until = asyncio.get_running_loop().time() + 0.4
             await self.push_frame(frame, direction)
             return
+
+        # Drop upstream speaking frame — no longer needed, we track via outbound frames
+        if isinstance(frame, BotStartedSpeakingFrame):
+            await self.push_frame(frame, direction)
+            return
+
+        # Drop interim STT — these are partial words, not complete utterances
+        if isinstance(frame, InterimTranscriptionFrame):
+            return
+
+        # Final STT — drive the LLM turn
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
             if text and not self._bot_speaking and not self._turn_lock.locked() and self._ready():
@@ -136,6 +151,7 @@ class SDRTurnPolicy(FrameProcessor):
                 logger.debug("STT dropped (bot_speaking=%s locked=%s): %s",
                              self._bot_speaking, self._turn_lock.locked(), text[:60])
             return
+
         await self.push_frame(frame, direction)
 
     def _ready(self) -> bool:
