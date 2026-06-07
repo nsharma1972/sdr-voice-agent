@@ -99,3 +99,78 @@ async def start_demo(req: DemoSessionRequest) -> dict:
 @app.get("/calls")
 async def list_calls(limit: int = 50, offset: int = 0) -> dict:
     return {"calls": [], "total": 0, "limit": limit, "offset": offset}
+
+
+# ── lead qualification ───────────────────────────────────────────────────────
+
+# In-memory cache so the UI can refresh without re-hitting external APIs
+_pipeline_cache: dict = {}
+
+
+@app.post("/signals/refresh")
+async def refresh_signals(days: int = 180) -> dict:
+    """
+    Trigger signal ingestion from all sources and re-qualify leads.
+    Results cached in memory — call again to refresh.
+    Takes 10–30 seconds depending on API latency.
+    """
+    from src.qualify.pipeline import run_pipeline
+    from src.qualify.scorer import Tier
+
+    result = await run_pipeline(days=days, min_tier=Tier.NURTURE)
+    _pipeline_cache.clear()
+    _pipeline_cache.update({
+        **result,
+        "leads": [l.to_dict() for l in result["leads"]],
+    })
+    return {
+        "status": "ok",
+        "contact_count": result["contact_count"],
+        "nurture_count":  result["nurture_count"],
+        "total_leads":    result["total_leads"],
+        "signal_counts":  result["signal_counts"],
+        "run_at":         result["run_at"],
+        "errors":         result["errors"],
+    }
+
+
+@app.get("/leads")
+async def list_leads(
+    tier: str = "CONTACT",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    Return qualified leads from the last pipeline run.
+    Call POST /signals/refresh first to populate.
+
+    tier: CONTACT (score≥60) | NURTURE (score≥40) | all
+    """
+    all_leads = _pipeline_cache.get("leads", [])
+
+    if tier.upper() != "ALL":
+        all_leads = [l for l in all_leads if l["tier"] == tier.upper()]
+
+    page = all_leads[offset: offset + limit]
+    return {
+        "leads":   page,
+        "total":   len(all_leads),
+        "tier":    tier,
+        "limit":   limit,
+        "offset":  offset,
+        "run_at":  _pipeline_cache.get("run_at"),
+    }
+
+
+@app.get("/leads/{company_name}")
+async def get_lead(company_name: str) -> dict:
+    """Return a single lead by company name (case-insensitive)."""
+    all_leads = _pipeline_cache.get("leads", [])
+    match = next(
+        (l for l in all_leads if l["company_name"].lower() == company_name.lower()),
+        None,
+    )
+    if not match:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Lead not found. Run /signals/refresh first.")
+    return match
